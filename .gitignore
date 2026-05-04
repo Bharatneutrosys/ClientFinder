@@ -1,0 +1,6 @@
+node_modules/
+.env
+*.log
+*.csv
+company-collector/node_modules/
+company-collector/.env
