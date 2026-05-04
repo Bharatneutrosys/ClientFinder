@@ -858,6 +858,11 @@ a {
   color: var(--warning);
 }
 
+.status-pill.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .status-pill.not-scanned,
 .status-pill.contacts-found {
   background: #edf3f4;

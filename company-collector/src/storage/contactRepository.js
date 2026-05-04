@@ -1,7 +1,11 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { dedupeAndEnrichContacts, enrichContactQuality } from "../contacts/contactQuality.js";
+import {
+  dedupeAndEnrichContacts,
+  enrichContactQuality,
+  isUsableContact,
+} from "../contacts/contactQuality.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,7 +26,9 @@ export async function loadContacts() {
   try {
     const raw = await readFile(CONTACTS_PATH, "utf8");
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map((contact) => enrichContactQuality(contact)) : [];
+    return Array.isArray(parsed)
+      ? parsed.map((contact) => enrichContactQuality(contact)).filter(isUsableContact)
+      : [];
   } catch (error) {
     return [];
   }
@@ -122,6 +128,8 @@ function buildStoredContact({ companyName, companyWebsite, contact }) {
     contact_type: contact.contact_type || "needs_review",
     evidence_summary: contact.evidence_summary || "",
     extraction_method: contact.extraction_method || "regex",
+    campaign_status: contact.campaign_status || "not_contacted",
+    notes: contact.notes || "",
     scanned_at: new Date().toISOString(),
     review_status: "new",
   };
@@ -149,6 +157,8 @@ function mergeStoredContact(existing, incoming) {
     is_email_guessed: Boolean(existing.is_email_guessed || incoming.is_email_guessed),
     email_guess_pattern: incoming.email_guess_pattern || existing.email_guess_pattern || "",
     decision_maker: Boolean(existing.decision_maker || incoming.decision_maker),
+    campaign_status: existing.campaign_status || incoming.campaign_status || "not_contacted",
+    notes: incoming.notes || existing.notes || "",
     scanned_at: incoming.scanned_at,
     review_status: existing.review_status || "new",
   };

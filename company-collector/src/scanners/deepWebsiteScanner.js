@@ -1,5 +1,5 @@
 import { extractContactsWithAi, isAiExtractionEnabled } from "./aiExtractor.js";
-import { dedupeAndEnrichContacts } from "../contacts/contactQuality.js";
+import { dedupeAndEnrichContacts, isValidEmail } from "../contacts/contactQuality.js";
 import { discoverDecisionMakerContacts } from "./peopleDiscovery.js";
 
 const LINK_KEYWORDS = [
@@ -284,8 +284,13 @@ function extractContactsFromHtml(html, sourceUrl, companyName) {
 }
 
 function extractEmails(content) {
-  const matches = String(content || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
-  return dedupe(matches.map((value) => value.toLowerCase()));
+  const matches =
+    String(content || "").match(/[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9.-]+\.[A-Z]{2,63}/gi) || [];
+  return dedupe(
+    matches
+      .map((value) => value.toLowerCase().replace(/[)"'>,;:]+$/, ""))
+      .filter(isValidEmail)
+  );
 }
 
 function prioritizeEmails(emails) {

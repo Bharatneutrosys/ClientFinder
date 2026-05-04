@@ -86,6 +86,9 @@ export function renderDetailPanel({
     </div>
 
     <div class="detail-tag-row">
+      <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span>
+      <span class="detail-tag">${escapeHtml(String(company.lead_score || 0))}/100 lead score</span>
+      ${company.outreach_ready ? `<span class="detail-tag">Outreach ready</span>` : ""}
       ${(company.industry_tags || [company.industry || "NA"])
         .map((tag) => `<span class="detail-tag">${escapeHtml(tag)}</span>`)
         .join("")}
@@ -154,10 +157,10 @@ function renderCompanyTable(companies, scanner, selectedCompanyId) {
           <tr>
             <th>Company</th>
             <th>Location</th>
-            <th>Contacts</th>
+            <th>Lead Score</th>
             <th>Best Contact</th>
-            <th>Confidence</th>
-            <th>Status</th>
+            <th>Review</th>
+            <th>Last Scanned</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -176,6 +179,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
   const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = scanState.failureReason || company.scan_failure_reason || "";
   const confidence = Number(bestContact?.confidence_score || company.confidence_score || 0);
+  const leadScore = Number(company.lead_score || 0);
 
   return `
     <tr class="${company.id === selectedCompanyId ? "selected" : ""}">
@@ -183,28 +187,38 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
         <button class="row-link" type="button" data-open-details="${escapeAttribute(company.id)}">
           <span class="row-title">${escapeHtml(company.name || "NA")}</span>
           <span class="row-subtitle">${escapeHtml(company.website ? stripProtocol(company.website) : "NA")}</span>
+          <span class="row-subtitle">${escapeHtml(company.phone || "No company phone")}</span>
         </button>
       </td>
       <td>
         <div class="cell-stack">
           <span>${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</span>
-          <span class="row-subtitle">${escapeHtml(company.industry || "NA")}</span>
+          <span class="row-subtitle">${escapeHtml(company.industry || company.keyword || "NA")}</span>
+          <span class="row-subtitle">${escapeHtml(formatSource(company.source))}</span>
         </div>
       </td>
       <td>
         <div class="cell-stack">
-          <span>${escapeHtml(String(company.contacts_found || 0))}</span>
-          <span class="row-subtitle">${company.has_primary_contact ? "Primary available" : "No primary"}</span>
+          <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span>
+          <span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>
+          <span class="row-subtitle">${company.outreach_ready ? "Outreach ready" : "Not outreach ready"}</span>
         </div>
       </td>
       <td>
         <div class="cell-stack">
           <span>${escapeHtml(bestContact?.name || "NA")}</span>
           <span class="row-subtitle">${escapeHtml(bestContact?.title || "No verified public person")}</span>
+          <span class="row-subtitle">${escapeHtml(bestContact?.email || bestContact?.phone || "No usable contact")}</span>
+          <span>${renderEmailStatusBadge(bestContact)}</span>
         </div>
       </td>
-      <td><span class="quality-pill ${escapeAttribute(getConfidenceBadgeClass(confidence))}">${escapeHtml(formatConfidenceBadge(confidence))}</span></td>
-      <td><span class="status-pill ${statusMeta.cssClass}"><span class="status-dot"></span>${escapeHtml(statusMeta.label)}</span></td>
+      <td><span class="status-pill ${escapeAttribute(getReviewStatusClass(company.review_status))}"><span class="status-dot"></span>${escapeHtml(formatReviewStatus(company.review_status))}</span></td>
+      <td>
+        <div class="cell-stack">
+          <span>${escapeHtml(formatDate(company.last_scanned))}</span>
+          <span class="status-pill ${statusMeta.cssClass}"><span class="status-dot"></span>${escapeHtml(statusMeta.label)}</span>
+        </div>
+      </td>
       <td>
         <div class="table-actions">
           <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open</button>
@@ -225,7 +239,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
 
 function renderCompanyGridCard(company, scanState, selectedCompanyId) {
   const bestContact = company.primary_contact || null;
-  const confidence = Number(bestContact?.confidence_score || company.confidence_score || 0);
+  const confidence = Number(company.lead_score || bestContact?.confidence_score || company.confidence_score || 0);
   const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = scanState.failureReason || company.scan_failure_reason || "";
 
@@ -236,12 +250,14 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId) {
           <h3>${escapeHtml(company.name || "NA")}</h3>
           <p>${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</p>
         </div>
-        <span class="quality-pill ${escapeAttribute(getConfidenceBadgeClass(confidence))}">${escapeHtml(formatConfidenceBadge(confidence))}</span>
+        <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || formatConfidenceBadge(confidence))}</span>
       </div>
       <div class="company-grid-meta">
         <span>${escapeHtml(company.industry || "NA")}</span>
         <span>${escapeHtml(String(company.contacts_found || 0))} contacts</span>
         <span>${escapeHtml(bestContact?.name || "No best contact")}</span>
+        <span>${escapeHtml(String(company.lead_score || 0))}/100 lead score</span>
+        <span>${company.outreach_ready ? "Outreach ready" : "Not outreach ready"}</span>
       </div>
       <div class="table-actions">
         <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open Details</button>
@@ -350,6 +366,14 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
   return `
     <div class="overview-grid">
       <div class="overview-card">
+        <span class="overview-label">Lead score</span>
+        <strong>${escapeHtml(company.lead_label || "Needs Review")} (${escapeHtml(String(company.lead_score || 0))}/100)</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Review status</span>
+        <strong>${escapeHtml(formatReviewStatus(company.review_status))}</strong>
+      </div>
+      <div class="overview-card">
         <span class="overview-label">Address</span>
         <strong>${escapeHtml(company.address || "NA")}</strong>
       </div>
@@ -374,8 +398,8 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         <strong>${escapeHtml(primaryContact?.name || "NA")}</strong>
       </div>
       <div class="overview-card">
-        <span class="overview-label">Confidence</span>
-        <strong>${escapeHtml(primaryContact?.confidence_score ? String(primaryContact.confidence_score) : "NA")}</strong>
+        <span class="overview-label">Lead reasons</span>
+        <strong>${escapeHtml((company.lead_reasons || []).join(", ") || "Needs more contact data")}</strong>
       </div>
     </div>
     ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("NA - no verified public contact person found after deep website scan.")}
@@ -623,6 +647,48 @@ function getConfidenceBadgeClass(value) {
   }
 
   return "needs_review";
+}
+
+function getLeadBadgeClass(label) {
+  const normalized = String(label || "").toLowerCase();
+
+  if (normalized === "high fit") {
+    return "high_quality";
+  }
+
+  if (normalized === "medium fit") {
+    return "medium_quality";
+  }
+
+  return "needs_review";
+}
+
+function formatReviewStatus(value) {
+  const labels = {
+    approved: "Approved",
+    new: "New",
+    needs_review: "Needs Review",
+    rejected: "Rejected",
+    not_reviewed: "Not Reviewed",
+  };
+
+  return labels[value] || "New";
+}
+
+function getReviewStatusClass(value) {
+  if (value === "approved") {
+    return "contacts-found";
+  }
+
+  if (value === "rejected") {
+    return "failed";
+  }
+
+  if (value === "needs_review" || value === "not_reviewed") {
+    return "needs-review";
+  }
+
+  return "not-scanned";
 }
 
 function dedupe(values) {

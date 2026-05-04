@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectCompanies } from "./src/pipeline/collectCompanies.js";
 import { selectPrimaryContact, sortPersonnelContacts } from "./src/contacts/primaryContact.js";
+import { scoreCompanyLead } from "./src/leads/leadScoring.js";
 import { deepScanWebsite } from "./src/scanners/deepWebsiteScanner.js";
 import {
   loadCompanies,
@@ -218,17 +219,26 @@ app.get("/api/exports/primary-contacts.csv", async (_request, response) => {
     const profiles = buildCompanyProfiles(companies, contacts);
     const fields = [
       "company_name",
+      "website",
+      "phone",
       "city",
       "state",
-      "website",
-      "contact_name",
-      "contact_title",
-      "contact_email",
-      "contact_phone",
+      "industry_category",
+      "source",
+      "lead_score",
+      "lead_label",
+      "outreach_ready",
+      "primary_contact_name",
+      "primary_contact_title",
+      "primary_email",
+      "email_status",
+      "contact_type",
+      "review_status",
+      "notes",
+      "primary_contact_phone",
       "linkedin_url",
       "decision_maker",
-      "email_confidence",
-      "confidence_score",
+      "contact_confidence_score",
       "source_url",
     ];
 
@@ -240,17 +250,26 @@ app.get("/api/exports/primary-contacts.csv", async (_request, response) => {
             escapeCsvValue(
               {
                 company_name: profile.name,
+                website: profile.website,
+                phone: profile.phone,
                 city: profile.city,
                 state: profile.state,
-                website: profile.website,
-                contact_name: profile.primary_contact?.name || "NA",
-                contact_title: profile.primary_contact?.title || "NA",
-                contact_email: profile.primary_contact?.email || "NA",
-                contact_phone: profile.primary_contact?.phone || "NA",
+                industry_category: profile.industry || profile.keyword || "",
+                source: profile.source,
+                lead_score: profile.lead_score,
+                lead_label: profile.lead_label,
+                outreach_ready: profile.outreach_ready ? "true" : "false",
+                primary_contact_name: profile.primary_contact?.name || "",
+                primary_contact_title: profile.primary_contact?.title || "",
+                primary_email: profile.primary_contact?.email || "",
+                email_status: profile.primary_contact?.email_status || "none",
+                contact_type: profile.primary_contact?.contact_type || "",
+                review_status: profile.review_status,
+                notes: profile.notes || "",
+                primary_contact_phone: profile.primary_contact?.phone || "",
                 linkedin_url: profile.primary_contact?.linkedin_url || "",
                 decision_maker: profile.primary_contact?.decision_maker ? "true" : "false",
-                email_confidence: profile.primary_contact?.email_confidence || "missing",
-                confidence_score: profile.primary_contact?.confidence_score || "",
+                contact_confidence_score: profile.primary_contact?.confidence_score || "",
                 source_url: profile.primary_contact?.source_url || "",
               }[field]
             )
@@ -268,6 +287,22 @@ app.get("/api/exports/primary-contacts.csv", async (_request, response) => {
       error: "Unable to export primary contacts.",
     });
   }
+});
+
+app.get("/api/exports/companies.csv", async (_request, response) => {
+  await sendCompaniesCsv(response, {});
+});
+
+app.get("/api/exports/high-fit-companies.csv", async (_request, response) => {
+  await sendCompaniesCsv(response, { leadLabel: "High Fit" });
+});
+
+app.get("/api/exports/phone-only-leads.csv", async (_request, response) => {
+  await sendCompaniesCsv(response, { phoneOnly: true });
+});
+
+app.get("/api/exports/no-email-leads.csv", async (_request, response) => {
+  await sendCompaniesCsv(response, { noEmail: true });
 });
 
 app.get("/api/exports/verified-decision-makers.csv", async (_request, response) => {
@@ -308,14 +343,7 @@ async function sendContactsCsv(
         return false;
       }
 
-      if (
-        outreachReadyOnly &&
-        !(
-          contact.contact_type === "person_contact" &&
-          Number(contact.confidence_score || 0) >= 85 &&
-          contact.email
-        )
-      ) {
+      if (outreachReadyOnly && !isOutreachReadyContact(contact)) {
         return false;
       }
 
@@ -376,6 +404,8 @@ async function sendContactsCsv(
       "evidence_summary",
       "scanned_at",
       "review_status",
+      "campaign_status",
+      "notes",
     ];
 
     const rows = [fields.join(",")];
@@ -415,6 +445,106 @@ async function sendContactsCsv(
   }
 }
 
+async function sendCompaniesCsv(
+  response,
+  {
+    leadLabel = "",
+    phoneOnly = false,
+    noEmail = false,
+  }
+) {
+  try {
+    const companies = await loadCompanies();
+    const contacts = await loadContacts();
+    const profiles = buildCompanyProfiles(companies, contacts);
+    const filteredProfiles = profiles.filter((profile) => {
+      if (leadLabel && profile.lead_label !== leadLabel) {
+        return false;
+      }
+
+      if (phoneOnly && !(profile.has_phone && !profile.has_valid_email)) {
+        return false;
+      }
+
+      if (noEmail && profile.has_valid_email) {
+        return false;
+      }
+
+      return true;
+    });
+    const fields = [
+      "company_name",
+      "website",
+      "phone",
+      "city",
+      "state",
+      "industry_category",
+      "source",
+      "lead_score",
+      "lead_label",
+      "outreach_ready",
+      "primary_contact_name",
+      "primary_contact_title",
+      "primary_email",
+      "email_status",
+      "contact_type",
+      "review_status",
+      "notes",
+    ];
+
+    const rows = [fields.join(",")];
+    filteredProfiles.forEach((profile) => {
+      rows.push(
+        fields
+          .map((field) =>
+            escapeCsvValue(
+              {
+                company_name: profile.name,
+                website: profile.website,
+                phone: profile.phone || profile.primary_contact?.phone || "",
+                city: profile.city,
+                state: profile.state,
+                industry_category: profile.industry || profile.keyword || "",
+                source: profile.source,
+                lead_score: profile.lead_score,
+                lead_label: profile.lead_label,
+                outreach_ready: profile.outreach_ready ? "true" : "false",
+                primary_contact_name: profile.primary_contact?.name || "",
+                primary_contact_title: profile.primary_contact?.title || "",
+                primary_email: profile.primary_contact?.email || "",
+                email_status: profile.primary_contact?.email_status || "none",
+                contact_type: profile.primary_contact?.contact_type || "",
+                review_status: profile.review_status,
+                notes: profile.notes || "",
+              }[field]
+            )
+          )
+          .join(",")
+      );
+    });
+
+    response.setHeader("content-type", "text/csv; charset=utf-8");
+    response.setHeader(
+      "content-disposition",
+      `attachment; filename="${
+        leadLabel
+          ? "high_fit_companies.csv"
+          : phoneOnly
+            ? "phone_only_leads.csv"
+            : noEmail
+              ? "no_email_leads.csv"
+              : "companies.csv"
+      }"`
+    );
+    response.send(rows.join("\n"));
+  } catch (error) {
+    response.status(500).json({
+      success: false,
+      error: "Unable to export companies.",
+    });
+  }
+}
+
 function mapStoredContactToApiContact(contact) {
   return {
     name: contact.name || "Unknown",
@@ -438,6 +568,8 @@ function mapStoredContactToApiContact(contact) {
     email_guess_pattern: contact.email_guess_pattern || "",
     extraction_method: contact.extraction_method || "regex",
     review_status: contact.review_status || "new",
+    campaign_status: contact.campaign_status || "not_contacted",
+    notes: contact.notes || "",
     scanned_at: contact.scanned_at || "",
     company_name: contact.company_name || "Unknown",
     company_website: contact.company_website || "",
@@ -463,6 +595,14 @@ function buildCompanyProfiles(companies, contacts) {
       contactsByWebsite.get(normalizeWebsiteKey(company.website)) || []
     );
     const primaryContact = selectPrimaryContact(companyContacts);
+    const leadQuality = scoreCompanyLead(
+      {
+        ...company,
+        primary_contact: primaryContact,
+      },
+      companyContacts
+    );
+    const reviewStatus = getCompanyReviewStatus(companyContacts);
 
     return {
       ...company,
@@ -472,14 +612,49 @@ function buildCompanyProfiles(companies, contacts) {
       primary_contact: primaryContact,
       has_primary_contact: Boolean(primaryContact),
       has_email: companyContacts.some((contact) => contact.email),
-      has_phone: companyContacts.some((contact) => contact.phone),
+      has_valid_email: companyContacts.some((contact) =>
+        ["verified", "generic"].includes(String(contact.email_status || "").toLowerCase())
+      ),
+      has_phone: Boolean(company.phone) || companyContacts.some((contact) => contact.phone),
       needs_review: companyContacts.some(
         (contact) =>
           contact.contact_type === "needs_review" || contact.review_status === "bad"
       ),
+      review_status: reviewStatus,
+      notes: "",
+      ...leadQuality,
       scan_status: companyContacts.length > 0 ? "contacts_found" : "not_scanned",
     };
   });
+}
+
+function isOutreachReadyContact(contact) {
+  return (
+    contact.email &&
+    contact.review_status !== "bad" &&
+    ["verified", "generic"].includes(String(contact.email_status || "").toLowerCase()) &&
+    Number(contact.confidence_score || 0) >= 55
+  );
+}
+
+function getCompanyReviewStatus(contacts) {
+  if (!contacts.length) {
+    return "not_reviewed";
+  }
+
+  if (contacts.some((contact) => contact.review_status === "approved")) {
+    return "approved";
+  }
+
+  if (contacts.every((contact) => contact.review_status === "bad")) {
+    return "rejected";
+  }
+
+  if (contacts.some((contact) => contact.review_status === "bad")) {
+    return "needs_review";
+  }
+
+  return "new";
 }
 
 function normalizeWebsiteKey(value) {

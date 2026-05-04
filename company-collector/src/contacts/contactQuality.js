@@ -33,6 +33,11 @@ const SOURCE_KEYWORDS = [
 ];
 
 const PRIORITY_TITLE_PATTERNS = [
+  "owner",
+  "principal",
+  "partner",
+  "president",
+  "chief executive",
   "business development",
   "sales",
   "account manager",
@@ -47,12 +52,28 @@ const PRIORITY_TITLE_PATTERNS = [
   "ceo",
 ];
 
+const VALID_EMAIL_PATTERN =
+  /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
+
+const INVALID_EMAIL_TLDS = new Set([
+  "apng",
+  "avif",
+  "gif",
+  "ico",
+  "jpeg",
+  "jpg",
+  "png",
+  "svg",
+  "webp",
+]);
+
 export function enrichContactQuality(contact) {
+  const normalizedEmail = normalizeEmail(contact?.email);
   const normalized = {
     ...contact,
     name: normalizeName(contact?.name),
     title: normalizeTitle(contact?.title),
-    email: normalizeEmail(contact?.email),
+    email: normalizedEmail,
     phone: normalizePhone(contact?.phone),
     source_url: String(contact?.source_url || "").trim(),
     linkedin_url: normalizeLinkedInUrl(contact?.linkedin_url),
@@ -60,7 +81,7 @@ export function enrichContactQuality(contact) {
     confidence_score: clampConfidence(contact?.confidence_score),
     email_confidence: normalizeEmailConfidence(contact?.email_confidence),
     email_status: normalizeEmailStatus(contact?.email_status),
-    is_email_guessed: Boolean(contact?.is_email_guessed),
+    is_email_guessed: Boolean(normalizedEmail && contact?.is_email_guessed),
     email_guess_pattern: String(contact?.email_guess_pattern || "").trim(),
     decision_maker: Boolean(contact?.decision_maker),
   };
@@ -70,7 +91,7 @@ export function enrichContactQuality(contact) {
   const isGenericEmail = GENERIC_EMAIL_PREFIXES.has(emailPrefix);
   const hasName = normalized.name !== "Unknown";
   const hasTitle = normalized.title !== "Website Contact";
-  const hasEmail = Boolean(normalized.email);
+  const hasEmail = isValidEmail(normalized.email);
   const hasPhone = Boolean(normalized.phone);
   const hasLinkedIn = Boolean(normalized.linkedin_url);
   const hasPriorityTitle = isPriorityTitle(normalized.title);
@@ -112,14 +133,14 @@ export function enrichContactQuality(contact) {
     contact_type: contactType,
     confidence_score: qualityScore,
     email_confidence: deriveEmailConfidence({
-      email: normalized.email,
+      email: hasEmail ? normalized.email : "",
       isGenericEmail,
       isJunkEmail,
       isEmailGuessed: normalized.is_email_guessed,
       existingEmailConfidence: normalized.email_confidence,
     }),
     email_status: deriveEmailStatus({
-      email: normalized.email,
+      email: hasEmail ? normalized.email : "",
       isGenericEmail,
       isJunkEmail,
       isEmailGuessed: normalized.is_email_guessed,
@@ -136,9 +157,14 @@ export function dedupeAndEnrichContacts(contacts) {
 
   (Array.isArray(contacts) ? contacts : []).forEach((contact) => {
     const enriched = enrichContactQuality(contact);
+    if (!shouldKeepContact(enriched)) {
+      return;
+    }
+
     const emailKey = normalizeKey(enriched.email);
     const phoneKey = normalizePhoneKey(enriched.phone);
-    const primaryKey = emailKey || phoneKey;
+    const linkedInKey = normalizeKey(enriched.linkedin_url);
+    const primaryKey = emailKey || phoneKey || linkedInKey;
 
     if (!primaryKey) {
       return;
@@ -154,6 +180,10 @@ export function dedupeAndEnrichContacts(contacts) {
   });
 
   return [...byIdentity.values()];
+}
+
+export function isUsableContact(contact) {
+  return shouldKeepContact(contact);
 }
 
 export function getQualityLabel(score) {
@@ -173,9 +203,37 @@ export function getQualityLabel(score) {
 }
 
 export function normalizeEmail(value) {
-  return String(value || "")
+  const email = String(value || "")
     .trim()
     .toLowerCase();
+
+  return isValidEmail(email) ? email : "";
+}
+
+export function isValidEmail(value) {
+  const email = String(value || "").trim().toLowerCase();
+
+  if (!email || email.length > 254 || !VALID_EMAIL_PATTERN.test(email)) {
+    return false;
+  }
+
+  const [localPart, domain] = email.split("@");
+  const domainParts = String(domain || "").split(".");
+  const tld = domainParts.at(-1) || "";
+
+  if (
+    !localPart ||
+    !domain ||
+    localPart.includes("..") ||
+    domain.includes("..") ||
+    localPart.startsWith(".") ||
+    localPart.endsWith(".") ||
+    INVALID_EMAIL_TLDS.has(tld)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 export function normalizeLinkedInUrl(value) {
@@ -272,16 +330,16 @@ function isPriorityTitle(title) {
 }
 
 function deriveContactType({ hasName, hasTitle, hasEmail, hasPhone, isGenericEmail, hasLinkedIn }) {
+  if (hasEmail && isGenericEmail) {
+    return "generic_company_contact";
+  }
+
   if (hasName && hasTitle && hasEmail) {
     return "person_contact";
   }
 
   if (hasName && hasTitle && hasLinkedIn) {
     return "person_contact";
-  }
-
-  if (hasEmail && isGenericEmail) {
-    return "generic_company_contact";
   }
 
   if (hasPhone && !hasEmail) {
@@ -311,15 +369,15 @@ function calculateConfidenceScore({
   if (hasName && hasTitle && hasEmail && !isEmailGuessed && !isGenericEmail) {
     score = 95;
   } else if (hasName && hasTitle && hasEmail && isEmailGuessed) {
-    score = 85;
+    score = 72;
   } else if (hasName && hasTitle && hasLinkedIn) {
-    score = 75;
+    score = 70;
   } else if (hasEmail && isGenericEmail && !isJunkEmail) {
-    score = 60;
+    score = 50;
   } else if (hasEmail && (hasTitle || hasPriorityTitle || hasStrongSourceValue)) {
     score = 85;
   } else if (hasPhone && !hasEmail) {
-    score = 55;
+    score = 45;
   }
 
   if (hasPriorityTitle) {
@@ -343,15 +401,34 @@ function calculateConfidenceScore({
   }
 
   if (emailConfidence === "guessed") {
-    score = Math.min(score, 85);
+    score = Math.min(score, 78);
+  }
+
+  if (isEmailGuessed) {
+    score = Math.min(score, 78);
+  }
+
+  if (isGenericEmail) {
+    score = Math.min(score, 62);
   }
 
   if (contactType === "needs_review") {
     score -= 10;
   }
 
+  if (contactType === "phone_only") {
+    score = Math.min(score, 55);
+  }
+
   if (Number.isFinite(Number(existingConfidenceScore)) && Number(existingConfidenceScore) > 1) {
-    score = Math.max(score, Number(existingConfidenceScore));
+    const existingScore = Number(existingConfidenceScore);
+    const maxTrustedExistingScore =
+      contactType === "needs_review"
+        ? 45
+        : isEmailGuessed || isGenericEmail || isJunkEmail || contactType === "phone_only"
+          ? 65
+          : 100;
+    score = Math.max(score, Math.min(existingScore, maxTrustedExistingScore));
   }
 
   return score;
@@ -390,12 +467,15 @@ function deriveEmailConfidence({
   isEmailGuessed,
   existingEmailConfidence,
 }) {
-  if (existingEmailConfidence && existingEmailConfidence !== "missing") {
-    return existingEmailConfidence;
-  }
-
   if (!email) {
     return "missing";
+  }
+
+  if (existingEmailConfidence && existingEmailConfidence !== "missing") {
+    if (existingEmailConfidence === "verified" && (isEmailGuessed || isJunkEmail || isGenericEmail)) {
+      return isEmailGuessed ? "guessed" : "generic";
+    }
+    return existingEmailConfidence;
   }
 
   if (isEmailGuessed) {
@@ -416,12 +496,15 @@ function deriveEmailStatus({
   isEmailGuessed,
   existingEmailStatus,
 }) {
-  if (existingEmailStatus && existingEmailStatus !== "none") {
-    return existingEmailStatus;
-  }
-
   if (!email) {
     return "none";
+  }
+
+  if (existingEmailStatus && existingEmailStatus !== "none") {
+    if (existingEmailStatus === "verified" && (isEmailGuessed || isJunkEmail || isGenericEmail)) {
+      return isEmailGuessed ? "guessed" : "generic";
+    }
+    return existingEmailStatus;
   }
 
   if (isEmailGuessed) {
@@ -446,6 +529,18 @@ function clampScore(value) {
 
 function normalizeKey(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function shouldKeepContact(contact) {
+  if (!contact.email && !contact.phone && !contact.linkedin_url) {
+    return false;
+  }
+
+  if (contact.quality_label === "junk") {
+    return false;
+  }
+
+  return true;
 }
 
 function normalizePhoneKey(value) {

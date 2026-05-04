@@ -1,16 +1,22 @@
 const TITLE_PRIORITY = [
+  "owner",
+  "founder",
+  "co-founder",
+  "principal",
+  "partner",
+  "president",
+  "chief executive",
+  "ceo",
   "business development",
+  "director",
+  "vp",
+  "vice president",
   "sales",
   "account manager",
   "client partner",
   "vendor manager",
   "recruiting manager",
   "talent acquisition",
-  "director",
-  "vp",
-  "vice president",
-  "founder",
-  "ceo",
 ];
 
 export function selectPrimaryContact(contacts) {
@@ -42,6 +48,7 @@ function getPrimaryRank(contact) {
   const isDecisionMaker = Boolean(contact?.decision_maker);
   const isGenericEmail = Boolean(contact?.is_generic_email);
   const isEmailGuessed = Boolean(contact?.is_email_guessed);
+  const emailStatus = String(contact?.email_status || "").toLowerCase();
   const hasLinkedIn = Boolean(contact?.linkedin_url);
 
   let rank = confidence;
@@ -54,8 +61,12 @@ function getPrimaryRank(contact) {
     rank += 40;
   }
 
-  if (hasEmail) {
-    rank += 60;
+  if (hasEmail && emailStatus === "verified" && !isEmailGuessed && !isGenericEmail) {
+    rank += 120;
+  } else if (hasEmail && emailStatus === "guessed") {
+    rank += 35;
+  } else if (hasEmail) {
+    rank += 20;
   } else if (hasPhone) {
     rank += 10;
   }
@@ -69,16 +80,24 @@ function getPrimaryRank(contact) {
   }
 
   if (isGenericEmail) {
-    rank -= 50;
+    rank -= 90;
   }
 
   if (isEmailGuessed) {
-    rank -= 15;
+    rank -= 65;
+  }
+
+  if (emailStatus === "verified") {
+    rank += 45;
+  } else if (emailStatus === "generic") {
+    rank -= 45;
+  } else if (emailStatus === "none" && !hasLinkedIn) {
+    rank -= 25;
   }
 
   const titleIndex = TITLE_PRIORITY.findIndex((pattern) => title.includes(pattern));
   if (titleIndex >= 0) {
-    rank += TITLE_PRIORITY.length - titleIndex + 20;
+    rank += (TITLE_PRIORITY.length - titleIndex) * 4 + 30;
   }
 
   return rank;

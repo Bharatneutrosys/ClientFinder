@@ -71,8 +71,12 @@ const elements = {
   stateFilter: document.querySelector("#state-filter"),
   cityFilter: document.querySelector("#city-filter"),
   sourceFilter: document.querySelector("#source-filter"),
+  leadScoreFilter: document.querySelector("#lead-score-filter"),
+  reviewStatusFilter: document.querySelector("#review-status-filter"),
+  contactTypeFilter: document.querySelector("#contact-type-filter"),
   sortBySelect: document.querySelector("#sort-by-select"),
   hasPrimaryFilter: document.querySelector("#has-primary-filter"),
+  hasWebsiteFilter: document.querySelector("#has-website-filter"),
   hasEmailFilter: document.querySelector("#has-email-filter"),
   hasPhoneFilter: document.querySelector("#has-phone-filter"),
   highConfidenceFilter: document.querySelector("#high-confidence-filter"),
@@ -93,8 +97,12 @@ const elements = {
   gridViewButton: document.querySelector("#grid-view-button"),
   scanVisibleButton: document.querySelector("#scan-visible-button"),
   exportVisibleButton: document.querySelector("#export-visible-button"),
+  exportCompaniesButton: document.querySelector("#export-companies-button"),
+  exportHighFitButton: document.querySelector("#export-high-fit-button"),
   exportContactsButton: document.querySelector("#export-contacts-button"),
   exportOutreachButton: document.querySelector("#export-outreach-button"),
+  exportPhoneOnlyButton: document.querySelector("#export-phone-only-button"),
+  exportNoEmailButton: document.querySelector("#export-no-email-button"),
   exportPrimaryButton: document.querySelector("#export-primary-button"),
   exportVerifiedButton: document.querySelector("#export-verified-button"),
   exportGuessedButton: document.querySelector("#export-guessed-button"),
@@ -181,9 +189,19 @@ function bindEvents() {
   elements.resumeQueueButton.addEventListener("click", resumeScanQueue);
   elements.cancelQueueButton.addEventListener("click", cancelScanQueue);
   elements.exportVisibleButton.addEventListener("click", exportVisibleCompaniesCsv);
+  elements.exportCompaniesButton.addEventListener("click", () => downloadFile("/api/exports/companies.csv"));
+  elements.exportHighFitButton.addEventListener("click", () =>
+    downloadFile("/api/exports/high-fit-companies.csv")
+  );
   elements.exportContactsButton.addEventListener("click", () => downloadFile("/api/exports/contacts.csv"));
   elements.exportOutreachButton.addEventListener("click", () =>
     downloadFile("/api/exports/outreach-ready-contacts.csv")
+  );
+  elements.exportPhoneOnlyButton.addEventListener("click", () =>
+    downloadFile("/api/exports/phone-only-leads.csv")
+  );
+  elements.exportNoEmailButton.addEventListener("click", () =>
+    downloadFile("/api/exports/no-email-leads.csv")
   );
   elements.exportPrimaryButton.addEventListener("click", () =>
     downloadFile("/api/exports/primary-contacts.csv")
@@ -212,7 +230,11 @@ function bindEvents() {
     elements.stateFilter,
     elements.cityFilter,
     elements.sourceFilter,
+    elements.leadScoreFilter,
+    elements.reviewStatusFilter,
+    elements.contactTypeFilter,
     elements.hasPrimaryFilter,
+    elements.hasWebsiteFilter,
     elements.hasEmailFilter,
     elements.hasPhoneFilter,
     elements.highConfidenceFilter,
@@ -338,7 +360,26 @@ function applyFilters() {
         return false;
       }
 
+      if (filters.leadScore && company.lead_label !== filters.leadScore) {
+        return false;
+      }
+
+      if (filters.reviewStatus && company.review_status !== filters.reviewStatus) {
+        return false;
+      }
+
+      if (
+        filters.contactType &&
+        !company.contacts.some((contact) => contact.contact_type === filters.contactType)
+      ) {
+        return false;
+      }
+
       if (filters.hasPrimary && !company.has_primary_contact) {
+        return false;
+      }
+
+      if (filters.hasWebsite && !company.website) {
         return false;
       }
 
@@ -828,17 +869,12 @@ function toggleSavedCompany(companyId) {
 }
 
 function updateSummary() {
-  const verifiedEmails = state.companies.reduce(
-    (count, company) => count + company.contacts.filter((contact) => contact.email_status === "verified").length,
+  const totalContacts = state.companies.reduce(
+    (count, company) => count + (company.contacts || []).length,
     0
   );
   const guessedEmails = state.companies.reduce(
     (count, company) => count + company.contacts.filter((contact) => contact.email_status === "guessed").length,
-    0
-  );
-  const highConfidence = state.companies.reduce(
-    (count, company) =>
-      count + company.contacts.filter((contact) => Number(contact.confidence_score || 0) >= 85).length,
     0
   );
   const linkedInDecisionMakers = state.companies.reduce(
@@ -849,16 +885,18 @@ function updateSummary() {
   );
 
   elements.totalCompanies.textContent = String(state.companies.length);
-  elements.companiesScanned.textContent = String(
-    state.companies.filter((company) => company.contacts_found > 0).length
-  );
+  elements.companiesScanned.textContent = String(totalContacts);
   elements.primaryContacts.textContent = String(
-    state.companies.filter((company) => company.has_primary_contact).length
+    state.companies.filter((company) => company.lead_label === "High Fit").length
   );
-  elements.verifiedEmails.textContent = String(verifiedEmails);
-  elements.highConfidenceCount.textContent = String(highConfidence);
+  elements.verifiedEmails.textContent = String(
+    state.companies.filter((company) => company.outreach_ready).length
+  );
+  elements.highConfidenceCount.textContent = String(
+    state.companies.filter((company) => company.review_status === "approved").length
+  );
   elements.needsReview.textContent = String(
-    state.companies.filter((company) => company.needs_review).length
+    state.companies.filter((company) => company.needs_review || company.lead_label === "Needs Review").length
   );
   elements.guessedEmails.textContent = String(guessedEmails);
   elements.linkedInDecisionMakers.textContent = String(linkedInDecisionMakers);
@@ -927,6 +965,9 @@ function renderSavedSearches() {
       elements.cityFilter.value = saved.filters.city;
       elements.stateFilter.value = saved.filters.state;
       elements.sourceFilter.value = saved.filters.source;
+      elements.leadScoreFilter.value = saved.filters.leadScore || "";
+      elements.reviewStatusFilter.value = saved.filters.reviewStatus || "";
+      elements.contactTypeFilter.value = saved.filters.contactType || "";
       state.currentPage = 1;
       applyFilters();
       elements.statusMessage.textContent = `Loaded saved search for ${saved.label}.`;
@@ -944,9 +985,16 @@ function exportVisibleCompaniesCsv() {
     "website",
     "phone",
     "source",
+    "lead_score",
+    "lead_label",
+    "outreach_ready",
+    "review_status",
     "scan_status",
     "contacts_found",
     "best_contact",
+    "primary_email",
+    "email_status",
+    "contact_type",
     "confidence_score",
   ];
 
@@ -959,6 +1007,9 @@ function exportVisibleCompaniesCsv() {
             {
               ...company,
               best_contact: company.primary_contact?.name || "",
+              primary_email: company.primary_contact?.email || "",
+              email_status: company.primary_contact?.email_status || "none",
+              contact_type: company.primary_contact?.contact_type || "",
               confidence_score: company.primary_contact?.confidence_score || company.confidence_score,
             }[field]
           )
@@ -999,7 +1050,11 @@ function getActiveFilters() {
     keywordLabel: String(elements.globalSearch.value || "").trim(),
     industry: elements.industryFilter.value || "",
     source: elements.sourceFilter.value,
+    leadScore: elements.leadScoreFilter.value,
+    reviewStatus: elements.reviewStatusFilter.value,
+    contactType: elements.contactTypeFilter.value,
     hasPrimary: elements.hasPrimaryFilter.checked,
+    hasWebsite: elements.hasWebsiteFilter.checked,
     hasEmail: elements.hasEmailFilter.checked,
     hasPhone: elements.hasPhoneFilter.checked,
     highConfidence: elements.highConfidenceFilter.checked,
@@ -1079,6 +1134,9 @@ function augmentCompaniesWithScannerData(companies) {
       contacts_found: mergedContacts.length || company.contacts_found || 0,
       has_primary_contact: Boolean(primaryContact),
       has_email: mergedContacts.some((contact) => Boolean(contact.email)),
+      has_valid_email: mergedContacts.some((contact) =>
+        ["verified", "generic"].includes(String(contact.email_status || "").toLowerCase())
+      ),
       has_phone: mergedContacts.some((contact) => Boolean(contact.phone)) || Boolean(company.phone),
       needs_review:
         company.needs_review ||
@@ -1176,7 +1234,7 @@ function compareCompanies(left, right, sortBy) {
 }
 
 function getCompanyScore(company) {
-  let score = getCompanyConfidence(company);
+  let score = Number(company.lead_score || 0) * 2 + getCompanyConfidence(company);
 
   if (company.has_primary_contact) {
     score += 40;
@@ -1194,7 +1252,7 @@ function getCompanyScore(company) {
 }
 
 function getCompanyConfidence(company) {
-  return Number(company.primary_contact?.confidence_score || company.confidence_score || 0);
+  return Number(company.lead_score || company.primary_contact?.confidence_score || company.confidence_score || 0);
 }
 
 function syncIndustryNav() {

@@ -1,3 +1,5 @@
+import { normalizeEmail } from "../contacts/contactQuality.js";
+
 const MAX_PAGE_TEXT_LENGTH = 4000;
 
 export function isAiExtractionEnabled() {
@@ -129,9 +131,7 @@ function normalizeAiContact(contact, defaultSourceUrl) {
   return {
     name: String(contact?.name || "Unknown").trim() || "Unknown",
     title: String(contact?.title || "Website Contact").trim() || "Website Contact",
-    email: String(contact?.email || "")
-      .trim()
-      .toLowerCase(),
+    email: normalizeEmail(contact?.email),
     phone: String(contact?.phone || "").trim(),
     linkedin_url: String(contact?.linkedin_url || "").trim(),
     contact_page_url: String(contact?.contact_page_url || defaultSourceUrl || "").trim(),
