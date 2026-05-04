@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Find Any Company</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark">FAC</div>
+          <div>
+            <p class="brand-name">Find Any Company</p>
+            <p class="brand-tagline">Find. Scan. Connect.</p>
+          </div>
+        </div>
+
+        <nav class="sidebar-nav">
+          <button class="nav-item active" type="button">Dashboard</button>
+          <button class="nav-item" type="button">Search</button>
+          <button class="nav-item" type="button">Companies</button>
+          <button class="nav-item" type="button">Contacts</button>
+          <button class="nav-item" type="button">Scan Queue</button>
+          <button class="nav-item" type="button">Exports</button>
+          <button class="nav-item" type="button">Saved Searches</button>
+        </nav>
+
+        <section class="sidebar-section">
+          <p class="sidebar-heading">Industries</p>
+          <div class="industry-nav">
+            <button class="industry-item" type="button" data-industry-nav="">All Industries</button>
+            <button class="industry-item active" type="button" data-industry-nav="IT Services & Staffing">IT Services &amp; Staffing</button>
+            <button class="industry-item" type="button" data-industry-nav="Healthcare">Healthcare</button>
+            <button class="industry-item" type="button" data-industry-nav="Construction">Construction</button>
+            <button class="industry-item" type="button" data-industry-nav="Finance">Finance</button>
+            <button class="industry-item" type="button" data-industry-nav="Manufacturing">Manufacturing</button>
+            <button class="industry-item" type="button" data-industry-nav="Retail & eCommerce">Retail &amp; eCommerce</button>
+            <button class="industry-item" type="button" data-industry-nav="Real Estate">Real Estate</button>
+            <button class="industry-item" type="button" data-industry-nav="Education">Education</button>
+            <button class="industry-item" type="button" data-industry-nav="Legal">Legal</button>
+            <button class="industry-item" type="button" data-industry-nav="Marketing & Advertising">Marketing &amp; Advertising</button>
+            <button class="industry-item" type="button" data-industry-nav="Other Services">Other Services</button>
+          </div>
+        </section>
+
+        <section class="sidebar-section">
+          <div class="sidebar-heading-row">
+            <p class="sidebar-heading">Saved Searches</p>
+            <span id="saved-search-count" class="sidebar-count">0</span>
+          </div>
+          <div id="saved-searches" class="saved-searches">
+            <p class="sidebar-empty">No saved searches yet.</p>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar sticky-topbar">
+          <div class="search-row">
+            <label class="search-field search-field-wide">
+              <input id="global-search" type="search" value="IT staffing" placeholder="Search companies, keywords, domains" />
+            </label>
+
+            <label class="search-field">
+              <select id="industry-filter">
+                <option value="">All Industries</option>
+                <option value="IT Services & Staffing" selected>IT Services &amp; Staffing</option>
+                <option value="Healthcare">Healthcare</option>
+                <option value="Construction">Construction</option>
+                <option value="Finance">Finance</option>
+                <option value="Manufacturing">Manufacturing</option>
+                <option value="Retail & eCommerce">Retail &amp; eCommerce</option>
+                <option value="Real Estate">Real Estate</option>
+                <option value="Education">Education</option>
+                <option value="Legal">Legal</option>
+                <option value="Marketing & Advertising">Marketing &amp; Advertising</option>
+                <option value="Other Services">Other Services</option>
+              </select>
+            </label>
+
+            <label class="search-field">
+              <input id="city-filter" type="search" placeholder="Dallas, Austin, Houston" />
+            </label>
+
+            <label class="search-field">
+              <select id="state-filter"></select>
+            </label>
+
+            <div class="search-actions">
+              <button id="search-button" class="primary-btn" type="button">Search</button>
+              <button id="collect-more-button" class="secondary-btn" type="button">Collect More</button>
+              <button id="batch-collect-button" class="secondary-btn" type="button">Batch Collect</button>
+            </div>
+          </div>
+        </header>
+
+        <section class="stats-strip">
+          <article class="mini-stat">
+            <span class="mini-stat-label">Companies Found</span>
+            <strong id="total-companies">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">With Contacts</span>
+            <strong id="companies-scanned">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">Primary Contacts</span>
+            <strong id="primary-contacts">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">Verified Emails</span>
+            <strong id="verified-emails">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">High Confidence</span>
+            <strong id="high-confidence-count">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">Needs Review</span>
+            <strong id="needs-review">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">Guessed Emails</span>
+            <strong id="guessed-emails">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">LinkedIn DMs</span>
+            <strong id="linkedin-decision-makers">0</strong>
+          </article>
+          <article class="mini-stat">
+            <span class="mini-stat-label">Failed Scans</span>
+            <strong id="failed-scans">0</strong>
+          </article>
+        </section>
+
+        <section class="results-card">
+          <div class="results-toolbar">
+            <div class="results-toolbar-left">
+              <div>
+                <p class="results-heading">Companies</p>
+                <p id="results-subtitle" class="toolbar-subtle">Search by state or city to begin.</p>
+              </div>
+            </div>
+            <div class="results-toolbar-right">
+              <span class="result-count-chip"><strong id="result-count">0</strong><span>results</span></span>
+              <button id="scan-visible-button" class="secondary-btn" type="button">Scan All Visible</button>
+              <div class="filters-dropdown">
+                <button id="filters-button" class="secondary-btn filters-toggle" type="button" aria-expanded="false" aria-controls="filters-menu">Filters</button>
+                <div id="filters-menu" class="filters-menu hidden">
+                  <div class="filters-menu-grid">
+                    <label class="chip-toggle menu-chip"><input id="has-primary-filter" type="checkbox" /><span>Has primary contact</span></label>
+                    <label class="chip-toggle menu-chip"><input id="has-email-filter" type="checkbox" /><span>Has email</span></label>
+                    <label class="chip-toggle menu-chip"><input id="has-phone-filter" type="checkbox" /><span>Has phone</span></label>
+                    <label class="chip-toggle menu-chip"><input id="verified-only-filter" type="checkbox" /><span>Verified only</span></label>
+                    <label class="chip-toggle menu-chip"><input id="guessed-email-filter" type="checkbox" /><span>Guessed emails</span></label>
+                    <label class="chip-toggle menu-chip"><input id="linkedin-found-filter" type="checkbox" /><span>LinkedIn found</span></label>
+                    <label class="chip-toggle menu-chip"><input id="high-confidence-filter" type="checkbox" /><span>High confidence</span></label>
+                    <label class="chip-toggle menu-chip"><input id="needs-review-filter" type="checkbox" /><span>Needs review</span></label>
+                    <label class="chip-toggle menu-chip"><input id="failed-scans-filter" type="checkbox" /><span>Failed scans</span></label>
+                  </div>
+                  <label class="inline-field filters-source-field">
+                    <span>Source</span>
+                    <select id="source-filter">
+                      <option value="">All sources</option>
+                      <option value="google_places">Google</option>
+                      <option value="serp_api">SerpAPI</option>
+                      <option value="fallback_search">Fallback</option>
+                    </select>
+                  </label>
+                  <div class="filters-menu-actions">
+                    <button id="save-search-button" class="secondary-btn" type="button">Save Search</button>
+                  </div>
+                </div>
+              </div>
+              <div class="filters-dropdown">
+                <button id="exports-button" class="secondary-btn filters-toggle" type="button" aria-expanded="false" aria-controls="exports-menu">Export</button>
+                <div id="exports-menu" class="filters-menu export-menu hidden">
+                  <div class="export-list">
+                    <button id="export-visible-button" class="menu-action" type="button">Export Visible</button>
+                    <button id="export-contacts-button" class="menu-action" type="button">All Contacts</button>
+                    <button id="export-outreach-button" class="menu-action" type="button">Outreach Ready</button>
+                    <button id="export-primary-button" class="menu-action" type="button">Primary</button>
+                    <button id="export-verified-button" class="menu-action" type="button">Verified DMs</button>
+                    <button id="export-guessed-button" class="menu-action" type="button">Guessed DMs</button>
+                    <button id="export-linkedin-button" class="menu-action" type="button">LinkedIn DMs</button>
+                  </div>
+                </div>
+              </div>
+              <label class="inline-field inline-select">
+                <select id="sort-by-select" aria-label="Sort results">
+                  <option value="best_match">Best match</option>
+                  <option value="confidence">Confidence</option>
+                  <option value="recent">Recent</option>
+                  <option value="name">Name</option>
+                </select>
+              </label>
+              <label class="inline-field inline-select">
+                <select id="page-size-select" aria-label="Page size">
+                  <option value="10">10</option>
+                  <option value="20" selected>20</option>
+                  <option value="50">50</option>
+                  <option value="100">100</option>
+                </select>
+              </label>
+              <div class="segmented-control">
+                <button id="list-view-button" class="segmented-btn active" type="button">List</button>
+                <button id="grid-view-button" class="segmented-btn" type="button">Grid</button>
+              </div>
+            </div>
+          </div>
+
+          <p id="status-message" class="status-message">Loading companies...</p>
+          <p id="batch-progress" class="bulk-progress">Batch collection is idle.</p>
+          <p id="bulk-progress" class="bulk-progress">Bulk scan is idle.</p>
+          <div class="queue-actions">
+            <button id="pause-queue-button" class="secondary-btn" type="button" disabled>Pause</button>
+            <button id="resume-queue-button" class="secondary-btn" type="button" disabled>Resume</button>
+            <button id="cancel-queue-button" class="secondary-btn" type="button" disabled>Cancel</button>
+          </div>
+
+          <div id="loading-state" class="loading-state hidden">Loading results...</div>
+          <div id="empty-state" class="empty-state hidden">
+            <h2>No companies found for this location yet.</h2>
+            <p>Try widening the search or use Collect More to fetch additional companies for the selected market.</p>
+          </div>
+
+          <div id="results-container" class="results-container list-view"></div>
+
+          <div class="pagination-bar">
+            <button id="prev-page-button" class="secondary-btn" type="button">Previous</button>
+            <span id="page-indicator" class="pagination-label">Page 1 of 1</span>
+            <button id="next-page-button" class="secondary-btn" type="button">Next</button>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="detail-modal" class="detail-modal hidden" aria-hidden="true">
+      <div class="detail-modal-backdrop" data-close-detail="1"></div>
+      <div class="detail-modal-panel" role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
+        <button id="close-detail-button" class="detail-modal-close" type="button" aria-label="Close company details">×</button>
+        <div id="detail-content" class="detail-panel-content"></div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

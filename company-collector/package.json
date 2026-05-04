@@ -1,0 +1,16 @@
+{
+  "name": "company-collector",
+  "version": "1.1.0",
+  "description": "Stable public IT staffing company data collector",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2"
+  },
+  "scripts": {
+    "collect": "node index.js",
+    "start": "node server.js",
+    "test:google": "node scripts/test-google-places.js"
+  }
+}
