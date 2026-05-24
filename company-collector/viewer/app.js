@@ -1,7 +1,9 @@
 import { createScanner, SCAN_STATUS } from "./scanner.js";
 import { renderDetailPanel, renderResultsView } from "./ui.js";
 
-const DEFAULT_INDUSTRY = "IT Services & Staffing";
+const DEFAULT_INDUSTRY = "Salon & Beauty";
+const DEFAULT_SEARCH_KEYWORD = "Salon";
+const DEFAULT_STATE = "TX";
 const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
 const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
 const SCAN_QUEUE_KEY = "find-any-company.scan-queue";
@@ -14,6 +16,8 @@ const DEFAULT_BATCH_CITIES = [
 ];
 
 const INDUSTRY_QUERY_MAP = {
+  "Salon & Beauty":
+    "salon hair salon beauty salon nail salon barbershop lash studio brow studio spa med spa local beauty services",
   "IT Services & Staffing":
     "IT staffing staffing agency recruiting firm IT consulting technology services talent solutions workforce solutions vendor consulting company",
   Healthcare: "healthcare medical practice clinic provider healthcare services",
@@ -35,7 +39,7 @@ const state = {
   selectedCompanyId: null,
   currentPage: 1,
   pageSize: 20,
-  viewMode: "list",
+  viewMode: "grid",
   loading: false,
   sortBy: "best_match",
   activeDetailTab: "overview",
@@ -70,6 +74,7 @@ const elements = {
   industryFilter: document.querySelector("#industry-filter"),
   stateFilter: document.querySelector("#state-filter"),
   cityFilter: document.querySelector("#city-filter"),
+  websiteConditionFilter: document.querySelector("#website-condition-filter"),
   sourceFilter: document.querySelector("#source-filter"),
   leadScoreFilter: document.querySelector("#lead-score-filter"),
   reviewStatusFilter: document.querySelector("#review-status-filter"),
@@ -134,6 +139,7 @@ const elements = {
   savedSearches: document.querySelector("#saved-searches"),
   savedSearchCount: document.querySelector("#saved-search-count"),
   industryNav: [...document.querySelectorAll("[data-industry-nav]")],
+  presetButtons: [...document.querySelectorAll("[data-search-preset]")],
   pauseQueueButton: document.querySelector("#pause-queue-button"),
   resumeQueueButton: document.querySelector("#resume-queue-button"),
   cancelQueueButton: document.querySelector("#cancel-queue-button"),
@@ -152,10 +158,7 @@ async function initialize() {
 }
 
 function bindEvents() {
-  elements.searchButton.addEventListener("click", () => {
-    state.currentPage = 1;
-    applyFilters();
-  });
+  elements.searchButton.addEventListener("click", handleSearch);
 
   elements.collectMoreButton.addEventListener("click", handleCollectMore);
   elements.batchCollectButton.addEventListener("click", handleBatchCollect);
@@ -229,6 +232,7 @@ function bindEvents() {
     elements.industryFilter,
     elements.stateFilter,
     elements.cityFilter,
+    elements.websiteConditionFilter,
     elements.sourceFilter,
     elements.leadScoreFilter,
     elements.reviewStatusFilter,
@@ -253,8 +257,7 @@ function bindEvents() {
   elements.globalSearch.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      state.currentPage = 1;
-      applyFilters();
+      handleSearch();
     }
   });
 
@@ -263,6 +266,15 @@ function bindEvents() {
       const nextIndustry = button.getAttribute("data-industry-nav") || "";
       elements.industryFilter.value = nextIndustry;
       syncIndustryNav();
+      state.currentPage = 1;
+      applyFilters();
+    });
+  });
+
+  elements.presetButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      elements.globalSearch.value = button.getAttribute("data-search-preset") || "";
+      elements.presetButtons.forEach((item) => item.classList.toggle("active", item === button));
       state.currentPage = 1;
       applyFilters();
     });
@@ -317,6 +329,42 @@ async function refreshCompanies() {
   }
 }
 
+async function handleSearch() {
+  const filters = getActiveFilters();
+  state.currentPage = 1;
+
+  if (!filters.cityLabel || !filters.state) {
+    applyFilters();
+    elements.statusMessage.textContent =
+      "Showing saved prospects. Enter a location and business type to collect new prospects.";
+    return;
+  }
+
+  elements.statusMessage.textContent = `Searching ${filters.cityLabel}, ${filters.state} for ${filters.keywordLabel || DEFAULT_SEARCH_KEYWORD}...`;
+  elements.searchButton.disabled = true;
+  elements.collectMoreButton.disabled = true;
+
+  try {
+    const payload = await collectCompaniesForLocation({
+      keyword: buildSearchKeyword(filters),
+      city: filters.cityLabel,
+      state: filters.state,
+      source: mapCollectorSource(filters.source),
+    });
+
+    await refreshCompanies();
+    applyFilters();
+    const added = Number(payload.stats?.addedCompanies || 0);
+    const total = Number(payload.stats?.totalCompanies || state.companies.length);
+    elements.statusMessage.textContent = `Search complete. Added ${added} new prospect${added === 1 ? "" : "s"}. Total saved: ${total}.`;
+  } catch (error) {
+    elements.statusMessage.textContent = formatFriendlyError(error);
+  } finally {
+    elements.searchButton.disabled = false;
+    elements.collectMoreButton.disabled = false;
+  }
+}
+
 function applyFilters() {
   const filters = getActiveFilters();
   syncIndustryNav();
@@ -332,6 +380,14 @@ function applyFilters() {
       }
 
       if (filters.industry && company.industry !== filters.industry) {
+        return false;
+      }
+
+      if (filters.websiteCondition === "has_website" && !company.website) {
+        return false;
+      }
+
+      if (filters.websiteCondition === "no_website" && company.website) {
         return false;
       }
 
@@ -510,16 +566,16 @@ async function handleCollectMore() {
   const filters = getActiveFilters();
 
   if (!filters.state || !filters.cityLabel) {
-    elements.statusMessage.textContent = "Choose both state and city before collecting more companies.";
+    elements.statusMessage.textContent = "Choose both state and city before collecting more prospects.";
     return;
   }
 
-  elements.statusMessage.textContent = `Collecting more companies for ${filters.cityLabel}, ${filters.state}...`;
+  elements.statusMessage.textContent = `Collecting more prospects for ${filters.cityLabel}, ${filters.state}...`;
   elements.collectMoreButton.disabled = true;
 
   try {
     const payload = await collectCompaniesForLocation({
-      keyword: buildIndustryQuery(filters.industry, filters.keywordLabel || DEFAULT_INDUSTRY),
+      keyword: buildSearchKeyword(filters),
       city: filters.cityLabel,
       state: filters.state,
       source: mapCollectorSource(filters.source),
@@ -527,7 +583,7 @@ async function handleCollectMore() {
 
     await refreshCompanies();
     applyFilters();
-    elements.statusMessage.textContent = `Collected more companies. Total saved: ${payload.stats?.totalCompanies || state.companies.length}.`;
+    elements.statusMessage.textContent = `Collected more prospects. Total saved: ${payload.stats?.totalCompanies || state.companies.length}.`;
   } catch (error) {
     elements.statusMessage.textContent = error.message;
   } finally {
@@ -569,7 +625,7 @@ async function handleBatchCollect() {
       renderBatchProgress();
 
       const payload = await collectCompaniesForLocation({
-        keyword: buildIndustryQuery(filters.industry, filters.keywordLabel || DEFAULT_INDUSTRY),
+        keyword: buildSearchKeyword(filters),
         city: targetCity.city,
         state: targetCity.state,
         source: mapCollectorSource(filters.source),
@@ -600,7 +656,7 @@ async function handleBatchCollect() {
 
 function handleSaveSearch() {
   const filters = getActiveFilters();
-  const label = `${filters.industry || "All Industries"} - ${filters.cityLabel || "All cities"}${filters.state ? `, ${filters.state}` : ""}`;
+  const label = `${filters.keywordLabel || "Any business"} - ${filters.cityLabel || "All cities"}${filters.state ? `, ${filters.state}` : ""}`;
   const entry = {
     id: `search-${Date.now()}`,
     label,
@@ -610,6 +666,7 @@ function handleSaveSearch() {
       city: filters.cityLabel || "",
       state: filters.state || "",
       source: filters.source || "",
+      websiteCondition: filters.websiteCondition || "",
     },
   };
 
@@ -644,7 +701,7 @@ async function handleScanAllVisible() {
 
   const queue = state.pagedCompanies.filter((company) => company.website).map((company) => company.id);
   if (!queue.length) {
-    elements.statusMessage.textContent = "No visible companies with websites to scan.";
+    elements.statusMessage.textContent = "No visible prospects with websites to scan.";
     return;
   }
 
@@ -665,7 +722,7 @@ async function handleScanAllVisible() {
     scanner.markQueued(companyId, "Queued in scan queue...");
   });
 
-  elements.statusMessage.textContent = `Queued ${queue.length} visible companies for scanning.`;
+  elements.statusMessage.textContent = `Queued ${queue.length} visible prospects for scanning.`;
   render();
   await runScanQueue();
 }
@@ -858,10 +915,10 @@ function toggleSavedCompany(companyId) {
 
   if (state.savedCompanies.includes(companyId)) {
     state.savedCompanies = state.savedCompanies.filter((id) => id !== companyId);
-    elements.statusMessage.textContent = "Company removed from saved.";
+    elements.statusMessage.textContent = "Prospect removed from saved.";
   } else {
     state.savedCompanies = [...state.savedCompanies, companyId];
-    elements.statusMessage.textContent = "Company saved.";
+    elements.statusMessage.textContent = "Prospect saved.";
   }
 
   persistSavedCompanies();
@@ -869,40 +926,30 @@ function toggleSavedCompany(companyId) {
 }
 
 function updateSummary() {
-  const totalContacts = state.companies.reduce(
-    (count, company) => count + (company.contacts || []).length,
-    0
-  );
-  const guessedEmails = state.companies.reduce(
-    (count, company) => count + company.contacts.filter((contact) => contact.email_status === "guessed").length,
-    0
-  );
-  const linkedInDecisionMakers = state.companies.reduce(
-    (count, company) =>
-      count +
-      company.contacts.filter((contact) => Boolean(contact.linkedin_url) && Boolean(contact.decision_maker)).length,
-    0
-  );
+  const noWebsiteCount = state.companies.filter((company) => !company.website).length;
+  const websiteFoundCount = state.companies.filter((company) => Boolean(company.website)).length;
+  const bestProspectsCount = state.companies.filter((company) => company.lead_label === "High Fit").length;
+  const outreachReadyCount = state.companies.filter((company) => company.outreach_ready).length;
 
   elements.totalCompanies.textContent = String(state.companies.length);
-  elements.companiesScanned.textContent = String(totalContacts);
-  elements.primaryContacts.textContent = String(
-    state.companies.filter((company) => company.lead_label === "High Fit").length
-  );
-  elements.verifiedEmails.textContent = String(
-    state.companies.filter((company) => company.outreach_ready).length
-  );
-  elements.highConfidenceCount.textContent = String(
-    state.companies.filter((company) => company.review_status === "approved").length
-  );
+  elements.companiesScanned.textContent = String(noWebsiteCount);
+  elements.primaryContacts.textContent = String(websiteFoundCount);
+  elements.verifiedEmails.textContent = String(bestProspectsCount);
+  elements.highConfidenceCount.textContent = String(outreachReadyCount);
   elements.needsReview.textContent = String(
     state.companies.filter((company) => company.needs_review || company.lead_label === "Needs Review").length
   );
-  elements.guessedEmails.textContent = String(guessedEmails);
-  elements.linkedInDecisionMakers.textContent = String(linkedInDecisionMakers);
-  elements.failedScans.textContent = String(
-    state.companies.filter((company) => company.scan_status === SCAN_STATUS.FAILED).length
-  );
+  if (elements.guessedEmails) {
+    elements.guessedEmails.textContent = "0";
+  }
+  if (elements.linkedInDecisionMakers) {
+    elements.linkedInDecisionMakers.textContent = "0";
+  }
+  if (elements.failedScans) {
+    elements.failedScans.textContent = String(
+      state.companies.filter((company) => company.scan_status === SCAN_STATUS.FAILED).length
+    );
+  }
 }
 
 function renderBulkProgress() {
@@ -965,6 +1012,7 @@ function renderSavedSearches() {
       elements.cityFilter.value = saved.filters.city;
       elements.stateFilter.value = saved.filters.state;
       elements.sourceFilter.value = saved.filters.source;
+      elements.websiteConditionFilter.value = saved.filters.websiteCondition || "";
       elements.leadScoreFilter.value = saved.filters.leadScore || "";
       elements.reviewStatusFilter.value = saved.filters.reviewStatus || "";
       elements.contactTypeFilter.value = saved.filters.contactType || "";
@@ -1042,14 +1090,17 @@ function getTotalPages() {
 }
 
 function getActiveFilters() {
+  const keywordLabel = String(elements.globalSearch.value || "").trim();
+
   return {
     state: elements.stateFilter.value,
     city: String(elements.cityFilter.value || "").trim().toLowerCase(),
     cityLabel: String(elements.cityFilter.value || "").trim(),
-    keyword: String(elements.globalSearch.value || "").trim().toLowerCase(),
-    keywordLabel: String(elements.globalSearch.value || "").trim(),
+    keyword: keywordLabel.toLowerCase(),
+    keywordLabel,
     industry: elements.industryFilter.value || "",
     source: elements.sourceFilter.value,
+    websiteCondition: elements.websiteConditionFilter.value || "",
     leadScore: elements.leadScoreFilter.value,
     reviewStatus: elements.reviewStatusFilter.value,
     contactType: elements.contactTypeFilter.value,
@@ -1066,6 +1117,18 @@ function getActiveFilters() {
   };
 }
 
+function formatWebsiteCondition(value) {
+  if (value === "no_website") {
+    return "Has Website = No";
+  }
+
+  if (value === "has_website") {
+    return "Has Website = Yes";
+  }
+
+  return "Any website condition";
+}
+
 function populateStates() {
   const states = [
     "", "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN",
@@ -1077,6 +1140,7 @@ function populateStates() {
   elements.stateFilter.innerHTML = states
     .map((value) => `<option value="${value}">${value || "All states"}</option>`)
     .join("");
+  elements.stateFilter.value = DEFAULT_STATE;
 }
 
 async function loadTargetCities() {
@@ -1152,9 +1216,10 @@ function augmentCompaniesWithScannerData(companies) {
 function buildResultsSubtitle() {
   const filters = getActiveFilters();
   const parts = [
-    filters.industry || "All Industries",
+    filters.keywordLabel || "Any business type",
     filters.cityLabel || "All cities",
     filters.state || "All states",
+    formatWebsiteCondition(filters.websiteCondition),
   ];
 
   return `${state.filteredCompanies.length} matches - ${parts.join(" - ")}`;
@@ -1164,6 +1229,11 @@ function buildIndustryQuery(industry, keywordLabel) {
   const normalizedIndustry = industry || "";
   const industryQuery = normalizedIndustry ? INDUSTRY_QUERY_MAP[normalizedIndustry] || normalizedIndustry : "";
   return [keywordLabel, industryQuery].filter(Boolean).join(" ").trim();
+}
+
+function buildSearchKeyword(filters) {
+  const keyword = filters.keywordLabel || DEFAULT_SEARCH_KEYWORD;
+  return buildIndustryQuery(filters.industry, keyword);
 }
 
 function mapCollectorSource(source) {
@@ -1177,7 +1247,25 @@ function mapCollectorSource(source) {
     return "serp";
   }
 
+  if (normalizedSource === "fallback_search") {
+    return "fallback";
+  }
+
   return normalizedSource;
+}
+
+function formatFriendlyError(error) {
+  const message = String(error?.message || error || "").trim();
+
+  if (!message) {
+    return "Search failed. Try another city, keyword, or source.";
+  }
+
+  if (message.toLowerCase().includes("failed to fetch")) {
+    return "Search provider could not be reached. Try again or switch source.";
+  }
+
+  return message;
 }
 
 function inferCompanyIndustry(company) {
@@ -1191,14 +1279,18 @@ function inferCompanyIndustry(company) {
     .toLowerCase();
 
   const match = Object.keys(INDUSTRY_QUERY_MAP).find((industry) => {
-    if (industry === DEFAULT_INDUSTRY) {
+    if (industry === "Salon & Beauty") {
+      return /(salon|barber|spa|beauty|nail|lash|brow|esthetic|med spa)/i.test(haystack);
+    }
+
+    if (industry === "IT Services & Staffing") {
       return /(staffing|recruiting|talent|consulting|technology|it services|workforce)/i.test(haystack);
     }
 
     return haystack.includes(industry.toLowerCase().split(" ")[0]);
   });
 
-  return match || DEFAULT_INDUSTRY;
+  return match || "Other Services";
 }
 
 function buildIndustryTags(company) {
@@ -1206,7 +1298,7 @@ function buildIndustryTags(company) {
   const tags = [industry];
 
   if (industry === DEFAULT_INDUSTRY) {
-    tags.push("Talent Solutions", "Vendor Search");
+    tags.push("Local Beauty", "Website Prospect");
   }
 
   return tags;

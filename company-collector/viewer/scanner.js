@@ -1,4 +1,3 @@
-import { scanCompanyWebsiteMock } from "./mockScanner.js";
 import { scanCompanyWebsiteReal } from "./realScanner.js";
 
 const SCAN_STATE_STORAGE_KEY = "find-any-company.scan-states";
@@ -8,6 +7,8 @@ export const SCAN_STATUS = {
   QUEUED: "queued",
   SCANNING: "scanning",
   SCANNED: "scanned",
+  BLOCKED: "blocked",
+  NO_CONTACTS: "no_contacts",
   FAILED: "failed",
   NEEDS_REVIEW: "needs_review",
 };
@@ -51,34 +52,7 @@ export function createScanner() {
     });
     persistScanMap(scanMap);
 
-    let result = await scanCompanyWebsiteReal(company);
-
-    if (!result.blocked && !result.contacts.length) {
-      const mockResult = await scanCompanyWebsiteMock(company);
-      result = {
-        ...mockResult,
-        message:
-          result.message === "No website URL available for scanning."
-            ? "No website URL available for scanning. Showing mock fallback contacts."
-            : result.message || "No public homepage contacts found. Showing mock fallback contacts.",
-        source: "mock_fallback",
-        blocked: false,
-        scanned_urls: result.scanned_urls || [],
-        failure_reason: result.failure_reason || "",
-      };
-    }
-
-    if (result.blocked && !result.contacts.length) {
-      const mockResult = await scanCompanyWebsiteMock(company);
-      result = {
-        ...mockResult,
-        message: "Website scan blocked. Use backend scanner later. Showing mock fallback contacts.",
-        source: "mock_fallback",
-        blocked: false,
-        scanned_urls: [],
-        failure_reason: result.failure_reason || "blocked",
-      };
-    }
+    const result = await scanCompanyWebsiteReal(company);
 
     const nextState = {
       status: normalizeStateStatus(result.status, result.contacts, result.blocked),
@@ -173,7 +147,9 @@ export function getScanStatusMeta(status) {
     [SCAN_STATUS.QUEUED]: { label: "Queued", cssClass: "scanning" },
     [SCAN_STATUS.SCANNING]: { label: "Scanning", cssClass: "scanning" },
     [SCAN_STATUS.SCANNED]: { label: "Scanned", cssClass: "contacts-found" },
-    [SCAN_STATUS.FAILED]: { label: "Failed", cssClass: "needs-review" },
+    [SCAN_STATUS.BLOCKED]: { label: "Blocked", cssClass: "failed" },
+    [SCAN_STATUS.NO_CONTACTS]: { label: "No contacts found", cssClass: "needs-review" },
+    [SCAN_STATUS.FAILED]: { label: "Blocked", cssClass: "failed" },
     [SCAN_STATUS.NEEDS_REVIEW]: { label: "Needs review", cssClass: "needs-review" },
   };
 
@@ -252,7 +228,7 @@ function normalizeStateStatus(status, contacts, blocked) {
   }
 
   if (blocked) {
-    return SCAN_STATUS.FAILED;
+    return SCAN_STATUS.BLOCKED;
   }
 
   if (status === "contacts_found") {
@@ -261,6 +237,10 @@ function normalizeStateStatus(status, contacts, blocked) {
 
   if (status === "failed") {
     return SCAN_STATUS.FAILED;
+  }
+
+  if (!contacts || contacts.length === 0) {
+    return SCAN_STATUS.NO_CONTACTS;
   }
 
   return deriveStatusFromContacts(contacts);

@@ -1,5 +1,23 @@
 import { getScanStatusMeta, SCAN_STATUS } from "./scanner.js";
 
+const PROSPECT_STAGES = [
+  "New Lead",
+  "Contacted",
+  "Message Sent",
+  "Call Done",
+  "Onsite Visit Done",
+  "Interested",
+  "Quote Requested",
+  "Quote Sent",
+  "Negotiation",
+  "Contract Expected",
+  "Contract Received",
+  "Follow Up Later",
+  "Not Interested",
+];
+
+const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received"]);
+
 export function renderResultsView({
   companies,
   container,
@@ -55,9 +73,9 @@ export function renderDetailPanel({
   if (!company) {
     container.innerHTML = `
       <div class="detail-empty">
-        <p class="detail-empty-eyebrow">Company details</p>
-        <h2>Select a company</h2>
-        <p>Choose a company from the results table to review company information and all public contacts found.</p>
+        <p class="detail-empty-eyebrow">Prospect details</p>
+        <h2>Select a prospect</h2>
+        <p>Choose a prospect card to review business information, communication, notes, quote status, and next actions.</p>
       </div>
     `;
     return;
@@ -67,15 +85,16 @@ export function renderDetailPanel({
   const primaryContact = company.primary_contact || null;
   const otherContacts = contacts.filter((contact) => !isSameContact(contact, primaryContact));
   const isSaved = Array.isArray(savedCompanies) && savedCompanies.includes(company.id);
-  const availableTabs = ["overview", "contacts", "sources", "activity"];
+  const availableTabs = ["overview", "communication", "notes", "quote", "next_actions"];
   const selectedTab = availableTabs.includes(activeTab) ? activeTab : "overview";
   const statusMeta = getScanStatusMeta(company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = company.scan_failure_reason || "";
+  const prospectStage = getProspectStage(company);
 
   container.innerHTML = `
     <div class="detail-header">
       <div>
-        <p class="detail-eyebrow">Company profile</p>
+        <p class="detail-eyebrow">Prospect profile</p>
         <h2 id="detail-modal-title">${escapeHtml(company.name || "NA")}</h2>
         <p class="detail-location">${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</p>
       </div>
@@ -87,7 +106,8 @@ export function renderDetailPanel({
 
     <div class="detail-tag-row">
       <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span>
-      <span class="detail-tag">${escapeHtml(String(company.lead_score || 0))}/100 lead score</span>
+      <span class="detail-tag">${escapeHtml(String(company.lead_score || 0))}/100 opportunity score</span>
+      <span class="detail-tag">${escapeHtml(prospectStage)}</span>
       ${company.outreach_ready ? `<span class="detail-tag">Outreach ready</span>` : ""}
       ${(company.industry_tags || [company.industry || "NA"])
         .map((tag) => `<span class="detail-tag">${escapeHtml(tag)}</span>`)
@@ -103,6 +123,11 @@ export function renderDetailPanel({
           : ""
       }
       <button class="secondary-btn" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
+      ${
+        CONVERTIBLE_STAGES.has(prospectStage)
+          ? `<button class="secondary-btn" type="button" title="Client credential, document, and payment storage will be added later.">Convert to Client</button>`
+          : ""
+      }
     </div>
 
     <div class="detail-tabs">
@@ -110,7 +135,7 @@ export function renderDetailPanel({
         .map(
           (tab) => `
             <button class="detail-tab ${selectedTab === tab ? "active" : ""}" type="button" data-detail-tab="${tab}">
-              ${escapeHtml(titleCase(tab))}
+              ${escapeHtml(formatDetailTab(tab))}
             </button>
           `
         )
@@ -155,10 +180,10 @@ function renderCompanyTable(companies, scanner, selectedCompanyId) {
       <table class="results-table">
         <thead>
           <tr>
-            <th>Company</th>
+            <th>Prospect</th>
             <th>Location</th>
-            <th>Lead Score</th>
-            <th>Best Contact</th>
+            <th>Opportunity Score</th>
+            <th>Contact Details</th>
             <th>Review</th>
             <th>Last Scanned</th>
             <th>Actions</th>
@@ -187,7 +212,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
         <button class="row-link" type="button" data-open-details="${escapeAttribute(company.id)}">
           <span class="row-title">${escapeHtml(company.name || "NA")}</span>
           <span class="row-subtitle">${escapeHtml(company.website ? stripProtocol(company.website) : "NA")}</span>
-          <span class="row-subtitle">${escapeHtml(company.phone || "No company phone")}</span>
+          <span class="row-subtitle">${escapeHtml(company.phone || "No business phone")}</span>
         </button>
       </td>
       <td>
@@ -206,7 +231,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
       </td>
       <td>
         <div class="cell-stack">
-          <span>${escapeHtml(bestContact?.name || "NA")}</span>
+          <span>${escapeHtml(bestContact?.name || company.phone || "NA")}</span>
           <span class="row-subtitle">${escapeHtml(bestContact?.title || "No verified public person")}</span>
           <span class="row-subtitle">${escapeHtml(bestContact?.email || bestContact?.phone || "No usable contact")}</span>
           <span>${renderEmailStatusBadge(bestContact)}</span>
@@ -256,7 +281,7 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId) {
         <span>${escapeHtml(company.industry || "NA")}</span>
         <span>${escapeHtml(String(company.contacts_found || 0))} contacts</span>
         <span>${escapeHtml(bestContact?.name || "No best contact")}</span>
-        <span>${escapeHtml(String(company.lead_score || 0))}/100 lead score</span>
+        <span>${escapeHtml(String(company.lead_score || 0))}/100 opportunity score</span>
         <span>${company.outreach_ready ? "Outreach ready" : "Not outreach ready"}</span>
       </div>
       <div class="table-actions">
@@ -277,11 +302,11 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId) {
 }
 
 function renderTabContent({ company, primaryContact, otherContacts, activeTab }) {
-  if (activeTab === "contacts") {
+  if (activeTab === "communication") {
     return `
       ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("NA - no verified public contact person found after deep website scan.")}
       <div class="detail-section">
-        <p class="detail-section-title">All found contacts</p>
+        <p class="detail-section-title">Contact Details</p>
         ${
           company.contacts?.length
             ? `
@@ -300,78 +325,83 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
     `;
   }
 
-  if (activeTab === "sources") {
-    const sourceUrls = dedupe(
-      [company.source_url, ...(company.contacts || []).map((contact) => contact.source_url)].filter(Boolean)
-    );
-
+  if (activeTab === "notes") {
     return `
-      <div class="detail-section">
-        <p class="detail-section-title">Source details</p>
-        <div class="source-list">
-          <div class="source-item">
-            <span class="source-label">Company source</span>
-            <a class="link" href="${escapeAttribute(company.source_url || "#")}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(company.source_url || "NA"))}</a>
-          </div>
-          ${sourceUrls
-            .map(
-              (url) => `
-                <div class="source-item">
-                  <span class="source-label">Referenced page</span>
-                  <a class="link" href="${escapeAttribute(url)}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(url))}</a>
-                </div>
-              `
-            )
-            .join("")}
-        </div>
+      <div class="overview-card">
+        <span class="overview-label">Notes</span>
+        <strong>Placeholder - notes storage will be added later.</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Private context</span>
+        <strong>${escapeHtml((company.lead_reasons || []).join(", ") || "No notes captured yet")}</strong>
       </div>
     `;
   }
 
-  if (activeTab === "activity") {
+  if (activeTab === "quote") {
+    return `
+      <div class="overview-grid">
+        <div class="overview-card">
+          <span class="overview-label">Quote status</span>
+          <strong>Placeholder - no quote has been created.</strong>
+        </div>
+        <div class="overview-card">
+          <span class="overview-label">Client storage</span>
+          <strong>Credentials, documents, and payment storage are not built yet.</strong>
+        </div>
+      </div>
+      ${renderConversionPlaceholder(company)}
+    `;
+  }
+
+  if (activeTab === "next_actions") {
     return `
       <div class="activity-list">
         <div class="activity-item">
           <span class="activity-dot"></span>
           <div>
-            <p>Last scanned</p>
-            <strong>${escapeHtml(formatDate(company.last_scanned))}</strong>
+            <p>Current stage</p>
+            <strong>${escapeHtml(getProspectStage(company))}</strong>
           </div>
         </div>
         <div class="activity-item">
           <span class="activity-dot"></span>
           <div>
-            <p>Contacts found</p>
-            <strong>${escapeHtml(String(company.contacts_found || 0))}</strong>
+            <p>Suggested next action</p>
+            <strong>${escapeHtml(getSuggestedNextAction(company))}</strong>
           </div>
         </div>
         <div class="activity-item">
           <span class="activity-dot"></span>
           <div>
-            <p>Collection source</p>
-            <strong>${escapeHtml(formatSource(company.source))}</strong>
+            <p>Stage options</p>
+            <strong>${escapeHtml(PROSPECT_STAGES.join(", "))}</strong>
           </div>
         </div>
-        <div class="activity-item">
-          <span class="activity-dot"></span>
-          <div>
-            <p>Failure reason</p>
-            <strong>${escapeHtml(formatFailureReason(company.scan_failure_reason || ""))}</strong>
-          </div>
-        </div>
+        ${renderConversionPlaceholder(company)}
       </div>
     `;
   }
 
+  const sourceUrls = dedupe(
+    [company.source_url, ...(company.contacts || []).map((contact) => contact.source_url)].filter(Boolean)
+  );
+
   return `
     <div class="overview-grid">
       <div class="overview-card">
-        <span class="overview-label">Lead score</span>
+        <span class="overview-label">Opportunity score</span>
         <strong>${escapeHtml(company.lead_label || "Needs Review")} (${escapeHtml(String(company.lead_score || 0))}/100)</strong>
       </div>
       <div class="overview-card">
-        <span class="overview-label">Review status</span>
-        <strong>${escapeHtml(formatReviewStatus(company.review_status))}</strong>
+        <span class="overview-label">Prospect stage</span>
+        <label class="inline-field">
+          <select aria-label="Prospect stage">
+            ${PROSPECT_STAGES.map(
+              (stage) => `<option value="${escapeAttribute(stage)}" ${stage === getProspectStage(company) ? "selected" : ""}>${escapeHtml(stage)}</option>`
+            ).join("")}
+          </select>
+        </label>
       </div>
       <div class="overview-card">
         <span class="overview-label">Address</span>
@@ -382,7 +412,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         ${
           company.website
             ? `<a class="link" href="${escapeAttribute(company.website)}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(company.website))}</a>`
-            : "<strong>NA</strong>"
+            : "<strong>Has Website = No</strong>"
         }
       </div>
       <div class="overview-card">
@@ -390,17 +420,30 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         <strong>${escapeHtml(company.phone || "NA")}</strong>
       </div>
       <div class="overview-card">
-        <span class="overview-label">Source</span>
+        <span class="overview-label">Business type</span>
+        <strong>${escapeHtml(company.industry || company.keyword || "NA")}</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Review status</span>
+        <strong>${escapeHtml(formatReviewStatus(company.review_status))}</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Listing source</span>
         <strong>${escapeHtml(formatSource(company.source))}</strong>
       </div>
-      <div class="overview-card">
-        <span class="overview-label">Best contact</span>
-        <strong>${escapeHtml(primaryContact?.name || "NA")}</strong>
-      </div>
-      <div class="overview-card">
-        <span class="overview-label">Lead reasons</span>
-        <strong>${escapeHtml((company.lead_reasons || []).join(", ") || "Needs more contact data")}</strong>
-      </div>
+    </div>
+
+    <div class="source-list">
+      ${sourceUrls
+        .map(
+          (url) => `
+            <div class="source-item">
+              <span class="source-label">Referenced page</span>
+              <a class="link" href="${escapeAttribute(url)}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(url))}</a>
+            </div>
+          `
+        )
+        .join("")}
     </div>
     ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("NA - no verified public contact person found after deep website scan.")}
   `;
@@ -411,7 +454,7 @@ function renderBestContactCard(contact) {
     <section class="best-contact-card">
       <div class="best-contact-header">
         <div>
-          <p class="detail-section-title">Best Contact</p>
+          <p class="detail-section-title">Contact Details</p>
           <h3>${escapeHtml(contact.name || "NA")}</h3>
           <p>${escapeHtml(contact.title || "NA")}</p>
         </div>
@@ -693,6 +736,61 @@ function getReviewStatusClass(value) {
 
 function dedupe(values) {
   return [...new Set(values.filter(Boolean))];
+}
+
+function getProspectStage(company) {
+  const stage = String(company.prospect_stage || company.stage || "New Lead").trim();
+  return PROSPECT_STAGES.includes(stage) ? stage : "New Lead";
+}
+
+function getSuggestedNextAction(company) {
+  const stage = getProspectStage(company);
+
+  if (stage === "New Lead") {
+    return company.website ? "Review website and prepare outreach." : "Confirm whether the business needs a website.";
+  }
+
+  if (stage === "Quote Requested") {
+    return "Prepare quote placeholder and confirm scope.";
+  }
+
+  if (stage === "Quote Sent" || stage === "Negotiation") {
+    return "Follow up on decision timeline.";
+  }
+
+  if (CONVERTIBLE_STAGES.has(stage)) {
+    return "Convert to Client placeholder is available. Full client storage is not built yet.";
+  }
+
+  return "Update communication status after the next touchpoint.";
+}
+
+function renderConversionPlaceholder(company) {
+  const stage = getProspectStage(company);
+
+  if (!CONVERTIBLE_STAGES.has(stage)) {
+    return `
+      <div class="overview-card">
+        <span class="overview-label">Convert to Client</span>
+        <strong>Available only for Contract Expected or Contract Received.</strong>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="overview-card">
+      <span class="overview-label">Convert to Client</span>
+      <strong>Placeholder only - credential, document, and payment storage will be added later.</strong>
+    </div>
+  `;
+}
+
+function formatDetailTab(value) {
+  if (value === "next_actions") {
+    return "Next Actions";
+  }
+
+  return titleCase(value);
 }
 
 function isSameContact(left, right) {

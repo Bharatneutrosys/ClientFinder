@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Consultancy Finder AI</title>
+    <title>Client Finder</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,22 +18,22 @@
         <div class="brand-block">
           <div class="brand-mark">CF</div>
           <div>
-            <p class="brand-name">Consultancy Finder AI</p>
-            <p class="brand-tagline">Find. Qualify. Export.</p>
+            <p class="brand-name">Client Finder</p>
+            <p class="brand-tagline">Local Business Prospecting &amp; Client Management</p>
           </div>
         </div>
 
         <nav class="sidebar-nav">
           <button class="nav-item active" type="button">Dashboard</button>
-          <button class="nav-item" type="button">Search</button>
-          <button class="nav-item" type="button">Companies</button>
-          <button class="nav-item" type="button">Contacts</button>
+          <button class="nav-item" type="button">Prospect Search</button>
+          <button class="nav-item" type="button">Prospects</button>
+          <button class="nav-item" type="button">Contact Details</button>
           <button class="nav-item" type="button">Scan Queue</button>
           <button class="nav-item" type="button">Exports</button>
           <button class="nav-item" type="button">Saved Searches</button>
         </nav>
 
-        <section class="sidebar-section">
+        <section class="sidebar-section hidden" aria-hidden="true">
           <p class="sidebar-heading">Industries</p>
           <div class="industry-nav">
             <button class="industry-item" type="button" data-industry-nav="">All Industries</button>
@@ -66,13 +66,16 @@
         <header class="topbar sticky-topbar">
           <div class="search-row">
             <label class="search-field search-field-wide">
-              <input id="global-search" type="search" value="IT staffing" placeholder="Search companies, keywords, domains" />
+              <span>Business Type</span>
+              <input id="global-search" type="search" value="Salon" placeholder="Salon, plumber, restaurant, daycare" />
             </label>
 
             <label class="search-field">
+              <span>Business Type Group</span>
               <select id="industry-filter">
-                <option value="">All Industries</option>
-                <option value="IT Services & Staffing" selected>IT Services &amp; Staffing</option>
+                <option value="" selected>Any business type</option>
+                <option value="Salon & Beauty">Salon &amp; Beauty</option>
+                <option value="IT Services & Staffing">IT Services &amp; Staffing</option>
                 <option value="Healthcare">Healthcare</option>
                 <option value="Construction">Construction</option>
                 <option value="Finance">Finance</option>
@@ -87,57 +90,68 @@
             </label>
 
             <label class="search-field">
-              <input id="city-filter" type="search" placeholder="Dallas, Austin, Houston" />
+              <span>Location</span>
+              <input id="city-filter" type="search" value="Farmers Branch" placeholder="City" />
             </label>
 
             <label class="search-field">
+              <span>State</span>
               <select id="state-filter"></select>
             </label>
 
+            <label class="search-field">
+              <span>Website Condition</span>
+              <select id="website-condition-filter">
+                <option value="">Any website condition</option>
+                <option value="no_website" selected>Has Website = No</option>
+                <option value="has_website">Has Website = Yes</option>
+              </select>
+            </label>
+
             <div class="search-actions">
-              <button id="search-button" class="primary-btn" type="button">Search</button>
+              <button id="search-button" class="primary-btn" type="button">Find Prospects</button>
               <button id="collect-more-button" class="secondary-btn" type="button">Collect More</button>
               <button id="batch-collect-button" class="secondary-btn" type="button">Batch Collect</button>
             </div>
+          </div>
+          <div class="preset-row" aria-label="Quick search presets">
+            <button class="preset-chip active" type="button" data-search-preset="Salon">Salon</button>
+            <button class="preset-chip" type="button" data-search-preset="Construction company">Construction</button>
+            <button class="preset-chip" type="button" data-search-preset="Plumber">Plumber</button>
+            <button class="preset-chip" type="button" data-search-preset="Painter">Painter</button>
+            <button class="preset-chip" type="button" data-search-preset="Printing company">Printing</button>
+            <button class="preset-chip" type="button" data-search-preset="Restaurant">Restaurant</button>
+            <button class="preset-chip" type="button" data-search-preset="Cleaning company">Cleaning</button>
+            <button class="preset-chip" type="button" data-search-preset="Dental clinic">Dental clinic</button>
+            <button class="preset-chip" type="button" data-search-preset="Auto repair">Auto repair</button>
+            <button class="preset-chip" type="button" data-search-preset="Daycare">Daycare</button>
           </div>
         </header>
 
         <section class="stats-strip">
           <article class="mini-stat">
-            <span class="mini-stat-label">Companies</span>
+            <span class="mini-stat-label">Total Prospects</span>
             <strong id="total-companies">0</strong>
           </article>
           <article class="mini-stat">
-            <span class="mini-stat-label">Contacts</span>
+            <span class="mini-stat-label">No Website</span>
             <strong id="companies-scanned">0</strong>
           </article>
           <article class="mini-stat">
-            <span class="mini-stat-label">High Fit</span>
+            <span class="mini-stat-label">Has Website</span>
             <strong id="primary-contacts">0</strong>
           </article>
           <article class="mini-stat">
-            <span class="mini-stat-label">Outreach Ready</span>
+            <span class="mini-stat-label">Best Opportunities</span>
             <strong id="verified-emails">0</strong>
           </article>
           <article class="mini-stat">
-            <span class="mini-stat-label">Approved</span>
+            <span class="mini-stat-label">Outreach Ready</span>
             <strong id="high-confidence-count">0</strong>
           </article>
           <article class="mini-stat">
             <span class="mini-stat-label">Needs Review</span>
             <strong id="needs-review">0</strong>
-          </article>
-          <article class="mini-stat">
-            <span class="mini-stat-label">Guessed</span>
-            <strong id="guessed-emails">0</strong>
-          </article>
-          <article class="mini-stat">
-            <span class="mini-stat-label">LinkedIn DMs</span>
-            <strong id="linkedin-decision-makers">0</strong>
-          </article>
-          <article class="mini-stat">
-            <span class="mini-stat-label">Failed Scans</span>
-            <strong id="failed-scans">0</strong>
           </article>
         </section>
 
@@ -145,8 +159,8 @@
           <div class="results-toolbar">
             <div class="results-toolbar-left">
               <div>
-                <p class="results-heading">Companies</p>
-                <p id="results-subtitle" class="toolbar-subtle">Search by state or city to begin.</p>
+                <p class="results-heading">Local Prospects</p>
+                <p id="results-subtitle" class="toolbar-subtle">Enter a location, business type, and website condition to find prospects.</p>
               </div>
             </div>
             <div class="results-toolbar-right">
@@ -156,14 +170,14 @@
                 <button id="filters-button" class="secondary-btn filters-toggle" type="button" aria-expanded="false" aria-controls="filters-menu">Filters</button>
                 <div id="filters-menu" class="filters-menu hidden">
                   <div class="filters-menu-grid">
-                    <label class="chip-toggle menu-chip"><input id="has-primary-filter" type="checkbox" /><span>Has primary contact</span></label>
+                    <label class="chip-toggle menu-chip"><input id="has-primary-filter" type="checkbox" /><span>Has contact</span></label>
                     <label class="chip-toggle menu-chip"><input id="has-website-filter" type="checkbox" /><span>Has website</span></label>
                     <label class="chip-toggle menu-chip"><input id="has-email-filter" type="checkbox" /><span>Has email</span></label>
                     <label class="chip-toggle menu-chip"><input id="has-phone-filter" type="checkbox" /><span>Has phone</span></label>
                     <label class="chip-toggle menu-chip"><input id="verified-only-filter" type="checkbox" /><span>Verified only</span></label>
                     <label class="chip-toggle menu-chip"><input id="guessed-email-filter" type="checkbox" /><span>Guessed emails</span></label>
                     <label class="chip-toggle menu-chip"><input id="linkedin-found-filter" type="checkbox" /><span>LinkedIn found</span></label>
-                    <label class="chip-toggle menu-chip"><input id="high-confidence-filter" type="checkbox" /><span>High confidence</span></label>
+                    <label class="chip-toggle menu-chip"><input id="high-confidence-filter" type="checkbox" /><span>Best opportunities</span></label>
                     <label class="chip-toggle menu-chip"><input id="needs-review-filter" type="checkbox" /><span>Needs review</span></label>
                     <label class="chip-toggle menu-chip"><input id="failed-scans-filter" type="checkbox" /><span>Failed scans</span></label>
                   </div>
@@ -177,9 +191,9 @@
                     </select>
                   </label>
                   <label class="inline-field filters-source-field">
-                    <span>Lead score</span>
+                    <span>Opportunity score</span>
                     <select id="lead-score-filter">
-                      <option value="">All lead scores</option>
+                      <option value="">All opportunity scores</option>
                       <option value="High Fit">High Fit</option>
                       <option value="Medium Fit">Medium Fit</option>
                       <option value="Low Fit">Low Fit</option>
@@ -198,7 +212,7 @@
                     </select>
                   </label>
                   <label class="inline-field filters-source-field">
-                    <span>Contact type</span>
+                    <span>Contact details</span>
                     <select id="contact-type-filter">
                       <option value="">All contact types</option>
                       <option value="person_contact">Named person</option>
@@ -217,9 +231,9 @@
                 <div id="exports-menu" class="filters-menu export-menu hidden">
                   <div class="export-list">
                     <button id="export-visible-button" class="menu-action" type="button">Export Visible</button>
-                    <button id="export-companies-button" class="menu-action" type="button">All Companies</button>
-                    <button id="export-high-fit-button" class="menu-action" type="button">High-Fit Companies</button>
-                    <button id="export-contacts-button" class="menu-action" type="button">All Contacts</button>
+                    <button id="export-companies-button" class="menu-action" type="button">All Prospects</button>
+                    <button id="export-high-fit-button" class="menu-action" type="button">Best Opportunities</button>
+                    <button id="export-contacts-button" class="menu-action" type="button">All Contact Details</button>
                     <button id="export-outreach-button" class="menu-action" type="button">Outreach Ready</button>
                     <button id="export-phone-only-button" class="menu-action" type="button">Phone-Only Leads</button>
                     <button id="export-no-email-button" class="menu-action" type="button">No-Email Leads</button>
@@ -253,7 +267,7 @@
             </div>
           </div>
 
-          <p id="status-message" class="status-message">Loading companies...</p>
+          <p id="status-message" class="status-message">Loading prospects...</p>
           <p id="batch-progress" class="bulk-progress">Batch collection is idle.</p>
           <p id="bulk-progress" class="bulk-progress">Bulk scan is idle.</p>
           <div class="queue-actions">
@@ -264,8 +278,8 @@
 
           <div id="loading-state" class="loading-state hidden">Loading results...</div>
           <div id="empty-state" class="empty-state hidden">
-            <h2>No companies found for this location yet.</h2>
-            <p>Try widening the search or use Collect More to fetch additional companies for the selected market.</p>
+            <h2>No prospects match the current search.</h2>
+            <p>Try a nearby city, another business type, or a different website condition.</p>
           </div>
 
           <div id="results-container" class="results-container list-view"></div>
@@ -282,7 +296,7 @@
     <div id="detail-modal" class="detail-modal hidden" aria-hidden="true">
       <div class="detail-modal-backdrop" data-close-detail="1"></div>
       <div class="detail-modal-panel" role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
-        <button id="close-detail-button" class="detail-modal-close" type="button" aria-label="Close company details">×</button>
+        <button id="close-detail-button" class="detail-modal-close" type="button" aria-label="Close prospect details">×</button>
         <div id="detail-content" class="detail-panel-content"></div>
       </div>
     </div>

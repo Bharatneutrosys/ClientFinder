@@ -50,6 +50,23 @@ app.get("/api/companies", async (_request, response) => {
   }
 });
 
+app.get("/api/provider-status", (_request, response) => {
+  response.json({
+    success: true,
+    providers: {
+      google_places: {
+        configured: Boolean(String(process.env.GOOGLE_PLACES_API_KEY || "").trim()),
+      },
+      serp_api: {
+        configured: Boolean(String(process.env.SERPAPI_KEY || "").trim()),
+      },
+      fallback_search: {
+        configured: true,
+      },
+    },
+  });
+});
+
 app.post("/api/collect-companies", async (request, response) => {
   try {
     const keyword = String(request.body?.keyword || "IT staffing").trim();
@@ -67,6 +84,7 @@ app.post("/api/collect-companies", async (request, response) => {
       return;
     }
 
+    const companiesBeforeMerge = await loadCompanies();
     const result = await collectCompanies(
       {
         keyword,
@@ -80,12 +98,14 @@ app.post("/api/collect-companies", async (request, response) => {
 
     const merged = await mergeAndSaveCompanies(result.companies);
     const contacts = await loadContacts();
+    const addedCompanies = Math.max(0, merged.companies.length - companiesBeforeMerge.length);
 
     response.json({
       success: true,
       companies: buildCompanyProfiles(merged.companies, contacts),
       stats: {
         ...result.stats,
+        addedCompanies,
         totalCompanies: merged.companies.length,
         globalDuplicatesRemoved: merged.duplicatesRemoved,
       },

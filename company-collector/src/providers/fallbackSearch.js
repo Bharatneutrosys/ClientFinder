@@ -12,7 +12,7 @@ export function createFallbackSearchProvider() {
     id: "fallback_search",
     isEnabled: () => true,
     async search(input) {
-      const businessQuery = `${slugifyQuery(input)} IT staffing consulting company`;
+      const businessQuery = `${slugifyQuery(input)} company business website phone`;
       const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(businessQuery)}`;
       const html = await fetchHtml(searchUrl);
       const results = html

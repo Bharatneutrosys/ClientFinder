@@ -31,5 +31,9 @@ export function createProviderRegistry(input) {
     );
   }
 
+  if (input.source === "fallback" || input.source === "fallback_search") {
+    return providers.filter((provider) => provider.id === "fallback_search");
+  }
+
   return providers;
 }
