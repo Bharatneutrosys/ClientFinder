@@ -337,7 +337,11 @@ app.get("/api/exports/linkedin-decision-makers.csv", async (_request, response) 
   await sendContactsCsv(response, { linkedInDecisionMakersOnly: true });
 });
 
-startServer(PORT_CANDIDATES);
+if (process.env.VERCEL !== "1") {
+  startServer(PORT_CANDIDATES);
+}
+
+export default app;
 
 async function sendContactsCsv(
   response,
