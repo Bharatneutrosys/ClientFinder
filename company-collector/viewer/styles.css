@@ -202,6 +202,7 @@ a {
 
 .topbar,
 .results-card,
+.followups-panel,
 .detail-panel,
 .mini-stat {
   background: rgba(255, 250, 242, 0.94);
@@ -218,7 +219,7 @@ a {
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) minmax(160px, 1.1fr) minmax(150px, 1fr) minmax(90px, 0.6fr) minmax(170px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1.4fr) minmax(160px, 1.1fr) minmax(150px, 1fr) minmax(90px, 0.6fr) minmax(170px, 1fr) minmax(180px, 1fr) auto;
   gap: 8px;
   align-items: end;
   min-height: 62px;
@@ -242,7 +243,9 @@ a {
 
 .search-field input,
 .search-field select,
-.inline-field select {
+.inline-field select,
+.inline-field input,
+.workflow-textarea {
   min-height: 38px;
   width: 100%;
   padding: 8px 10px;
@@ -254,7 +257,9 @@ a {
 
 .search-field input:focus,
 .search-field select:focus,
-.inline-field select:focus {
+.inline-field select:focus,
+.inline-field input:focus,
+.workflow-textarea:focus {
   outline: 2px solid rgba(199, 154, 66, 0.22);
   border-color: var(--primary);
 }
@@ -394,6 +399,46 @@ a {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
+}
+
+.followups-panel {
+  border-radius: var(--radius-xl);
+  padding: 12px;
+}
+
+.followups-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.today-followups {
+  display: grid;
+  gap: 8px;
+}
+
+.followup-item {
+  border: 1px solid #eadcca;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  align-items: center;
+}
+
+.followup-item span {
+  display: grid;
+  gap: 3px;
+}
+
+.followup-item small {
+  color: var(--muted);
 }
 
 .mini-stat {
@@ -681,6 +726,7 @@ a {
 .contact-list-item,
 .na-panel,
 .source-item,
+.workflow-card,
 .activity-item {
   border: 1px solid #eadcca;
   border-radius: 16px;
@@ -736,6 +782,29 @@ a {
 .activity-list {
   display: grid;
   gap: 10px;
+}
+
+.workflow-card {
+  display: grid;
+  gap: 10px;
+}
+
+.workflow-textarea {
+  min-height: 104px;
+  resize: vertical;
+  font: inherit;
+}
+
+.workflow-actions,
+.workflow-inline {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.workflow-inline .inline-field {
+  flex: 1 1 180px;
 }
 
 .contact-list-top {
@@ -1073,11 +1142,12 @@ a {
     padding: 12px;
   }
 
-  .topbar,
-  .results-card {
-    padding: 12px;
-    border-radius: 18px;
-  }
+.topbar,
+.followups-panel,
+.results-card {
+  padding: 12px;
+  border-radius: 18px;
+}
 
   .search-row,
   .stats-strip,
@@ -1097,6 +1167,7 @@ a {
   }
 
   .results-toolbar,
+  .followups-header,
   .pagination-bar,
   .detail-header,
   .best-contact-header,
@@ -1106,6 +1177,8 @@ a {
   }
 
   .search-actions,
+  .workflow-actions,
+  .workflow-inline,
   .results-toolbar-right,
   .results-toolbar-left,
   .detail-actions,

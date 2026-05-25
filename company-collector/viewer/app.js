@@ -6,6 +6,7 @@ const DEFAULT_SEARCH_KEYWORD = "Salon";
 const DEFAULT_STATE = "TX";
 const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
 const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
+const PROSPECT_WORKFLOWS_KEY = "find-any-company.prospect-workflows";
 const SCAN_QUEUE_KEY = "find-any-company.scan-queue";
 const DEFAULT_BATCH_CITIES = [
   { city: "Dallas", state: "TX" },
@@ -45,6 +46,7 @@ const state = {
   activeDetailTab: "overview",
   savedSearches: loadSavedSearches(),
   savedCompanies: loadSavedCompanies(),
+  prospectWorkflows: loadProspectWorkflows(),
   targetCities: [],
   batchCollect: {
     running: false,
@@ -130,6 +132,8 @@ const elements = {
   verifiedEmails: document.querySelector("#verified-emails"),
   highConfidenceCount: document.querySelector("#high-confidence-count"),
   needsReview: document.querySelector("#needs-review"),
+  todayFollowupCount: document.querySelector("#today-followup-count"),
+  todayFollowups: document.querySelector("#today-followups"),
   guessedEmails: document.querySelector("#guessed-emails"),
   linkedInDecisionMakers: document.querySelector("#linkedin-decision-makers"),
   failedScans: document.querySelector("#failed-scans"),
@@ -538,6 +542,7 @@ function render() {
   });
 
   renderDetail();
+  renderTodayFollowups();
   renderBatchProgress();
   renderBulkProgress();
 }
@@ -903,6 +908,9 @@ function renderDetail() {
     onScanCompany: handleScanCompany,
     onRetryScan: handleRetryScan,
     onToggleSavedCompany: toggleSavedCompany,
+    onUpdateProspectStatus: updateProspectStatus,
+    onAddCommunicationNote: addCommunicationNote,
+    onSetNextFollowUp: setNextFollowUp,
     onApproveContact: (payload) => handleReviewUpdate(payload, "approved"),
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
     onCopyContactEmail: (payload) => copyToClipboard(payload.email, "Email copied."),
@@ -929,7 +937,77 @@ function toggleSavedCompany(companyId) {
   }
 
   persistSavedCompanies();
+  applyFilters();
+}
+
+function updateProspectStatus(companyId, nextStatus) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company || !nextStatus) {
+    return;
+  }
+
+  const workflow = getProspectWorkflow(companyId);
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    prospect_stage: nextStatus,
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  elements.statusMessage.textContent = `Updated ${company.name || "prospect"} status to ${nextStatus}.`;
+  applyFilters();
+}
+
+function addCommunicationNote(companyId, noteText) {
+  const company = state.companies.find((item) => item.id === companyId);
+  const text = String(noteText || "").trim();
+  if (!company || !text) {
+    elements.statusMessage.textContent = "Enter a communication note before saving.";
+    return;
+  }
+
+  const workflow = getProspectWorkflow(companyId);
+  const communicationNotes = Array.isArray(workflow.communication_notes)
+    ? workflow.communication_notes
+    : [];
+
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    communication_notes: [
+      {
+        id: `note-${Date.now()}`,
+        text,
+        created_at: new Date().toISOString(),
+      },
+      ...communicationNotes,
+    ].slice(0, 25),
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  elements.statusMessage.textContent = `Added communication note for ${company.name || "prospect"}.`;
   renderDetail();
+}
+
+function setNextFollowUp(companyId, followUpDate) {
+  const company = state.companies.find((item) => item.id === companyId);
+  const nextFollowUpDate = String(followUpDate || "").trim();
+  if (!company) {
+    return;
+  }
+
+  const workflow = getProspectWorkflow(companyId);
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    next_follow_up: nextFollowUpDate,
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  elements.statusMessage.textContent = nextFollowUpDate
+    ? `Set next follow-up for ${company.name || "prospect"} to ${nextFollowUpDate}.`
+    : `Cleared next follow-up for ${company.name || "prospect"}.`;
+  applyFilters();
 }
 
 function updateSummary() {
@@ -1031,6 +1109,42 @@ function renderSavedSearches() {
   });
 }
 
+function renderTodayFollowups() {
+  if (!elements.todayFollowups || !elements.todayFollowupCount) {
+    return;
+  }
+
+  const today = getTodayDateKey();
+  const dueCompanies = state.companies
+    .filter((company) => normalizeDateKey(company.next_follow_up) === today)
+    .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+
+  elements.todayFollowupCount.textContent = String(dueCompanies.length);
+
+  if (!dueCompanies.length) {
+    elements.todayFollowups.innerHTML = `<p class="sidebar-empty">No follow-ups due today.</p>`;
+    return;
+  }
+
+  elements.todayFollowups.innerHTML = dueCompanies
+    .map(
+      (company) => `
+        <button class="followup-item" type="button" data-followup-company="${escapeAttribute(company.id)}">
+          <span>
+            <strong>${escapeHtml(company.name || "NA")}</strong>
+            <small>${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")} - ${escapeHtml(company.prospect_stage || "New Lead")}</small>
+          </span>
+          <span>${escapeHtml(company.next_follow_up || today)}</span>
+        </button>
+      `
+    )
+    .join("");
+
+  elements.todayFollowups.querySelectorAll("[data-followup-company]").forEach((button) => {
+    button.addEventListener("click", () => openDetails(button.getAttribute("data-followup-company")));
+  });
+}
+
 function exportVisibleCompaniesCsv() {
   const fields = [
     "name",
@@ -1050,6 +1164,9 @@ function exportVisibleCompaniesCsv() {
     "lead_label",
     "outreach_ready",
     "review_status",
+    "prospect_stage",
+    "next_follow_up",
+    "latest_note",
     "scan_status",
     "contacts_found",
     "best_contact",
@@ -1072,6 +1189,7 @@ function exportVisibleCompaniesCsv() {
               email_status: company.primary_contact?.email_status || "none",
               contact_type: company.primary_contact?.contact_type || "",
               confidence_score: company.primary_contact?.confidence_score || company.confidence_score,
+              latest_note: company.communication_notes?.[0]?.text || "",
             }[field]
           )
         )
@@ -1259,7 +1377,7 @@ function augmentCompaniesWithScannerData(companies) {
     const websiteModel = buildWebsiteModel(company);
     const mobileAppModel = buildMobileAppModel(company);
 
-    return {
+    return applyProspectWorkflow({
       ...company,
       ...websiteModel,
       ...mobileAppModel,
@@ -1279,8 +1397,34 @@ function augmentCompaniesWithScannerData(companies) {
       scan_status: scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED,
       scan_failure_reason: scanState.failureReason || company.scan_failure_reason || "",
       last_scanned: scanState.lastScanned || company.last_scanned || "",
-    };
+    });
   });
+}
+
+function applyProspectWorkflow(company) {
+  if (!company?.id) {
+    return company;
+  }
+
+  const workflow = getProspectWorkflow(company.id);
+  const communicationNotes = Array.isArray(workflow.communication_notes)
+    ? workflow.communication_notes
+    : [];
+
+  Object.assign(company, {
+    prospect_stage: workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead",
+    stage: workflow.prospect_stage || company.stage || company.prospect_stage || "New Lead",
+    next_follow_up: workflow.next_follow_up || company.next_follow_up || "",
+    communication_notes: communicationNotes,
+    latest_communication_note: communicationNotes[0]?.text || "",
+    workflow_updated_at: workflow.updated_at || "",
+  });
+
+  return company;
+}
+
+function getProspectWorkflow(companyId) {
+  return state.prospectWorkflows[companyId] || {};
 }
 
 function buildResultsSubtitle() {
@@ -1707,6 +1851,32 @@ function loadSavedCompanies() {
 
 function persistSavedCompanies() {
   localStorage.setItem(SAVED_COMPANIES_KEY, JSON.stringify(state.savedCompanies));
+}
+
+function loadProspectWorkflows() {
+  try {
+    const raw = localStorage.getItem(PROSPECT_WORKFLOWS_KEY);
+    const parsed = JSON.parse(raw || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function persistProspectWorkflows() {
+  localStorage.setItem(PROSPECT_WORKFLOWS_KEY, JSON.stringify(state.prospectWorkflows));
+}
+
+function getTodayDateKey() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeDateKey(value) {
+  return String(value || "").slice(0, 10);
 }
 
 function maybeCloseMenu({ button, menu, eventTarget, onClose }) {

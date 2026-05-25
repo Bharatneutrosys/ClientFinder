@@ -65,6 +65,9 @@ export function renderDetailPanel({
   onScanCompany,
   onRetryScan,
   onToggleSavedCompany,
+  onUpdateProspectStatus,
+  onAddCommunicationNote,
+  onSetNextFollowUp,
   onApproveContact,
   onMarkBadContact,
   onCopyContactEmail,
@@ -122,7 +125,7 @@ export function renderDetailPanel({
           ? `<button class="secondary-btn" type="button" data-detail-retry="${escapeAttribute(company.id)}">Retry</button>`
           : ""
       }
-      <button class="secondary-btn" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
+      <button class="secondary-btn" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
       ${
         CONVERTIBLE_STAGES.has(prospectStage)
           ? `<button class="secondary-btn" type="button" title="Client credential, document, and payment storage will be added later.">Convert to Client</button>`
@@ -164,6 +167,29 @@ export function renderDetailPanel({
   const saveButton = container.querySelector("[data-save-company]");
   if (saveButton) {
     saveButton.addEventListener("click", () => onToggleSavedCompany(saveButton.getAttribute("data-save-company")));
+  }
+
+  const statusSelect = container.querySelector("[data-prospect-status]");
+  if (statusSelect) {
+    statusSelect.addEventListener("change", () =>
+      onUpdateProspectStatus(statusSelect.getAttribute("data-company-id"), statusSelect.value)
+    );
+  }
+
+  const noteButton = container.querySelector("[data-add-communication-note]");
+  if (noteButton) {
+    noteButton.addEventListener("click", () => {
+      const textarea = container.querySelector("[data-communication-note-input]");
+      onAddCommunicationNote(noteButton.getAttribute("data-add-communication-note"), textarea?.value || "");
+    });
+  }
+
+  const followUpButton = container.querySelector("[data-set-follow-up]");
+  if (followUpButton) {
+    followUpButton.addEventListener("click", () => {
+      const input = container.querySelector("[data-follow-up-input]");
+      onSetNextFollowUp(followUpButton.getAttribute("data-set-follow-up"), input?.value || "");
+    });
   }
 
   bindContactActions(container, {
@@ -215,6 +241,8 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
           <span class="row-subtitle">Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
           <span class="row-subtitle">Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
           ${company.bookingPlatform ? `<span class="row-subtitle">Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
+          <span class="row-subtitle">Status: ${escapeHtml(getProspectStage(company))}</span>
+          <span class="row-subtitle">Next Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
           <span class="row-subtitle">${escapeHtml(company.phone || "No business phone")}</span>
         </button>
       </td>
@@ -285,6 +313,8 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId) {
         <span>Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
         <span>Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
         ${company.bookingPlatform ? `<span>Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
+        <span>Status: ${escapeHtml(getProspectStage(company))}</span>
+        <span>Next Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
         <span>${escapeHtml(String(company.contacts_found || 0))} contacts</span>
         <span>${escapeHtml(bestContact?.name || "No best contact")}</span>
         <span>${escapeHtml(String(company.lead_score || 0))}/100 opportunity score</span>
@@ -310,6 +340,14 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId) {
 function renderTabContent({ company, primaryContact, otherContacts, activeTab }) {
   if (activeTab === "communication") {
     return `
+      <section class="workflow-card">
+        <p class="detail-section-title">Communication Note</p>
+        <textarea class="workflow-textarea" data-communication-note-input rows="4" placeholder="Call outcome, message sent, objection, or next step"></textarea>
+        <div class="workflow-actions">
+          <button class="primary-btn" type="button" data-add-communication-note="${escapeAttribute(company.id)}">Add Note</button>
+        </div>
+      </section>
+      ${renderCommunicationNotes(company)}
       ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("NA - no verified public contact person found after deep website scan.")}
       <div class="detail-section">
         <p class="detail-section-title">Contact Details</p>
@@ -333,10 +371,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
 
   if (activeTab === "notes") {
     return `
-      <div class="overview-card">
-        <span class="overview-label">Notes</span>
-        <strong>Placeholder - notes storage will be added later.</strong>
-      </div>
+      ${renderCommunicationNotes(company)}
       <div class="overview-card">
         <span class="overview-label">Private context</span>
         <strong>${escapeHtml((company.lead_reasons || []).join(", ") || "No notes captured yet")}</strong>
@@ -373,6 +408,23 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         <div class="activity-item">
           <span class="activity-dot"></span>
           <div>
+            <p>Next follow-up</p>
+            <strong>${escapeHtml(company.next_follow_up || "Not scheduled")}</strong>
+          </div>
+        </div>
+        <section class="workflow-card">
+          <p class="detail-section-title">Set Next Follow-up</p>
+          <div class="workflow-inline">
+            <label class="inline-field">
+              <span>Date</span>
+              <input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-follow-up-input />
+            </label>
+            <button class="primary-btn" type="button" data-set-follow-up="${escapeAttribute(company.id)}">Set Follow-up</button>
+          </div>
+        </section>
+        <div class="activity-item">
+          <span class="activity-dot"></span>
+          <div>
             <p>Suggested next action</p>
             <strong>${escapeHtml(getSuggestedNextAction(company))}</strong>
           </div>
@@ -402,12 +454,16 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
       <div class="overview-card">
         <span class="overview-label">Prospect stage</span>
         <label class="inline-field">
-          <select aria-label="Prospect stage">
+          <select aria-label="Prospect stage" data-prospect-status="1" data-company-id="${escapeAttribute(company.id)}">
             ${PROSPECT_STAGES.map(
               (stage) => `<option value="${escapeAttribute(stage)}" ${stage === getProspectStage(company) ? "selected" : ""}>${escapeHtml(stage)}</option>`
             ).join("")}
           </select>
         </label>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Next follow-up</span>
+        <strong>${escapeHtml(company.next_follow_up || "Not scheduled")}</strong>
       </div>
       <div class="overview-card">
         <span class="overview-label">Address</span>
@@ -544,6 +600,35 @@ function renderContactListItem(contact, isPrimary = false) {
         ${renderContactActionButtons(contact)}
       </div>
     </article>
+  `;
+}
+
+function renderCommunicationNotes(company) {
+  const notes = Array.isArray(company.communication_notes) ? company.communication_notes : [];
+
+  if (!notes.length) {
+    return renderNaPanel("No communication notes saved yet.");
+  }
+
+  return `
+    <section class="workflow-card">
+      <p class="detail-section-title">Communication History</p>
+      <div class="activity-list">
+        ${notes
+          .map(
+            (note) => `
+              <div class="activity-item">
+                <span class="activity-dot"></span>
+                <div>
+                  <p>${escapeHtml(formatDate(note.created_at))}</p>
+                  <strong>${escapeHtml(note.text || "NA")}</strong>
+                </div>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
   `;
 }
 
