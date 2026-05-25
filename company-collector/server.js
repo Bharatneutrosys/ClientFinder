@@ -780,28 +780,44 @@ function mapGooglePlaceToProspect(place, { businessType, city, state }) {
   const websiteUrl = String(place?.websiteUri || "").trim();
   const rating = Number(place?.rating || 0);
   const reviewCount = Number(place?.userRatingCount || 0);
-  const opportunityScore = scoreGoogleProspect({ websiteUrl, rating, reviewCount });
+  const businessName = place?.displayName?.text || "Unknown";
+  const websiteModel = classifyWebsitePresence(websiteUrl);
+  const opportunityScore = scoreGoogleProspect({
+    websiteStatus: websiteModel.websiteStatus,
+    rating,
+    reviewCount,
+    phone: place?.nationalPhoneNumber,
+    businessName,
+  });
+  const reasonChips = buildProspectReasonChips({
+    websiteStatus: websiteModel.websiteStatus,
+    rating,
+    reviewCount,
+    phone: place?.nationalPhoneNumber,
+    opportunityScore,
+  });
 
   return {
     id: placeId ? `google-${placeId}` : makeManualId(place?.displayName?.text, place?.formattedAddress),
     placeId,
-    businessName: place?.displayName?.text || "Unknown",
+    businessName,
     businessType,
     address: place?.formattedAddress || "",
     phone: place?.nationalPhoneNumber || "",
     rating,
     reviewCount,
     websiteUrl,
-    websiteStatus: websiteUrl ? "Has Website = Yes" : "Has Website = No",
-    hasWebsite: Boolean(websiteUrl),
+    websiteStatus: websiteModel.websiteStatus,
+    hasWebsite: websiteModel.hasWebsite,
     googleProfileUrl: place?.googleMapsUri || "",
     mapsUrl: place?.googleMapsUri || "",
     source: "Google Places",
     opportunityScore,
+    reasonChips,
     prospectStatus: "New Lead",
     mobileAppStatus: "Unknown",
     hasMobileApp: null,
-    bookingPlatform: "Unknown",
+    bookingPlatform: websiteModel.bookingPlatform,
     city,
     state,
   };
@@ -813,11 +829,27 @@ function matchesWebsiteCondition(prospect, websiteCondition) {
   }
 
   if (websiteCondition === "no_website") {
-    return !prospect.hasWebsite;
+    return ["No Website", "Social Only", "Booking Link Only"].includes(prospect.websiteStatus);
   }
 
   if (websiteCondition === "has_website") {
-    return prospect.hasWebsite;
+    return ["Has Website", "Weak Website", "Broken Website"].includes(prospect.websiteStatus);
+  }
+
+  if (websiteCondition === "social_only") {
+    return prospect.websiteStatus === "Social Only";
+  }
+
+  if (websiteCondition === "booking_link_only") {
+    return prospect.websiteStatus === "Booking Link Only";
+  }
+
+  if (websiteCondition === "weak_website") {
+    return prospect.websiteStatus === "Weak Website";
+  }
+
+  if (websiteCondition === "broken_website") {
+    return prospect.websiteStatus === "Broken Website";
   }
 
   if (websiteCondition === "unknown") {
@@ -827,18 +859,142 @@ function matchesWebsiteCondition(prospect, websiteCondition) {
   return true;
 }
 
-function scoreGoogleProspect({ websiteUrl, rating, reviewCount }) {
-  let score = websiteUrl ? 58 : 88;
+function scoreGoogleProspect({ websiteStatus, rating, reviewCount, phone, businessName }) {
+  let score = 50;
+
+  if (websiteStatus === "No Website") {
+    score += 30;
+  } else if (websiteStatus === "Social Only" || websiteStatus === "Booking Link Only") {
+    score += 24;
+  } else if (websiteStatus === "Has Website") {
+    score -= 10;
+  } else if (websiteStatus === "Weak Website") {
+    score += 8;
+  } else if (websiteStatus === "Broken Website") {
+    score += 12;
+  }
 
   if (rating >= 4.5) {
-    score += 6;
+    score += 10;
+  } else if (rating >= 4) {
+    score += 5;
+  } else if (rating > 0 && rating < 3.8) {
+    score -= 12;
   }
 
-  if (reviewCount >= 50) {
+  if (reviewCount >= 75) {
+    score += 10;
+  } else if (reviewCount >= 25) {
     score += 6;
+  } else if (reviewCount > 0 && reviewCount < 5) {
+    score -= 8;
   }
 
-  return Math.min(100, score);
+  if (String(phone || "").trim()) {
+    score += 8;
+  } else {
+    score -= 10;
+  }
+
+  if (isLikelyChainBusiness(businessName)) {
+    score -= 15;
+  }
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function classifyWebsitePresence(websiteUrl) {
+  const url = String(websiteUrl || "").trim();
+  const normalizedUrl = url.toLowerCase();
+
+  if (!url) {
+    return {
+      websiteStatus: "No Website",
+      hasWebsite: false,
+      bookingPlatform: "Unknown",
+    };
+  }
+
+  const bookingPlatform = detectBookingPlatform(normalizedUrl);
+  if (bookingPlatform !== "Unknown") {
+    return {
+      websiteStatus: "Booking Link Only",
+      hasWebsite: false,
+      bookingPlatform,
+    };
+  }
+
+  if (isSocialProfileUrl(normalizedUrl)) {
+    return {
+      websiteStatus: "Social Only",
+      hasWebsite: false,
+      bookingPlatform: "Unknown",
+    };
+  }
+
+  return {
+    websiteStatus: "Has Website",
+    hasWebsite: true,
+    bookingPlatform: "Unknown",
+  };
+}
+
+function detectBookingPlatform(value) {
+  const patterns = [
+    ["Fresha", /fresha\.com/i],
+    ["Booksy", /booksy\.com/i],
+    ["Vagaro", /vagaro\.com/i],
+    ["GlossGenius", /glossgenius\.com/i],
+    ["Square", /(square\.site\/appointments|squareup\.com\/appointments|squareup\.com)/i],
+    ["Mindbody", /mindbodyonline\.com/i],
+    ["Schedulicity", /schedulicity\.com/i],
+    ["StyleSeat", /styleseat\.com/i],
+    ["Acuity", /acuityscheduling\.com/i],
+    ["Calendly", /calendly\.com/i],
+    ["Other Booking Platform", /(setmore\.com|simplybook\.me|bookedin\.com|appointment|appointments|booking|book-now|scheduler|reservation)/i],
+  ];
+  const match = patterns.find(([, pattern]) => pattern.test(value));
+  return match ? match[0] : "Unknown";
+}
+
+function isSocialProfileUrl(value) {
+  return /(facebook\.com|instagram\.com|linktr\.ee|yelp\.com|tiktok\.com|x\.com|twitter\.com|linkedin\.com|google\.com\/maps|g\.page)/i.test(value);
+}
+
+function isLikelyChainBusiness(name) {
+  return /(great clips|supercuts|sport clips|fantastic sams|smartstyle|ulta|sephora|regis|cost cutters|jcpenney|walmart|target|costco)/i.test(
+    String(name || "")
+  );
+}
+
+function buildProspectReasonChips({ websiteStatus, rating, reviewCount, phone, opportunityScore }) {
+  const reasons = [];
+
+  if (websiteStatus === "No Website") {
+    reasons.push("No website found");
+  } else if (websiteStatus === "Booking Link Only") {
+    reasons.push("Booking platform only");
+  } else if (websiteStatus === "Social Only") {
+    reasons.push("Social profile only");
+  }
+
+  if (rating >= 4.4 && reviewCount >= 25) {
+    reasons.push("Strong reviews");
+  }
+
+  if (String(phone || "").trim()) {
+    reasons.push("Phone available");
+  }
+
+  if (opportunityScore >= 85) {
+    reasons.push("High opportunity");
+  }
+
+  if (!reasons.length || opportunityScore < 65) {
+    reasons.push("Needs review");
+  }
+
+  return reasons.slice(0, 4);
 }
 
 function extractPlaceId(resourceName) {

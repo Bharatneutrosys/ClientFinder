@@ -266,6 +266,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
   const confidence = Number(bestContact?.confidence_score || company.confidence_score || 0);
   const leadScore = Number(company.lead_score || 0);
   const isSaved = isSavedProspect(company, savedCompanies);
+  const reasonChips = renderReasonChips(company.reasonChips);
 
   return `
     <article class="prospect-row ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
@@ -283,6 +284,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
         <span>${escapeHtml(company.websiteStatus || "Unknown")}</span>
         <span>${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
         ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>${escapeHtml(company.bookingPlatform)}</span>` : ""}
+        ${reasonChips}
         ${mode === "saved" ? `<span>Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>` : ""}
         ${mode === "saved" ? `<span>Last contacted: ${escapeHtml(company.last_contacted_at || "NA")}</span>` : ""}
       </div>
@@ -292,6 +294,21 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
         <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">View Details</button>
       </div>
     </article>
+  `;
+}
+
+function renderReasonChips(reasonChips) {
+  if (!Array.isArray(reasonChips) || !reasonChips.length) {
+    return "";
+  }
+
+  return `
+    <div class="reason-chip-row">
+      ${reasonChips
+        .slice(0, 4)
+        .map((reason) => `<span class="reason-chip">${escapeHtml(reason)}</span>`)
+        .join("")}
+    </div>
   `;
 }
 
@@ -315,7 +332,7 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
         <span>${escapeHtml(company.industry || "NA")}</span>
         <span>Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
         <span>Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
-        ${company.bookingPlatform ? `<span>Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
+        ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
         <span>Status: ${escapeHtml(getProspectStage(company))}</span>
         <span>Next Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
         <span>${escapeHtml(String(company.contacts_found || 0))} contacts</span>
@@ -468,7 +485,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
       </div>
       <div class="overview-card">
         <span class="overview-label">Booking Platform</span>
-        <strong>${escapeHtml(company.bookingPlatform || "NA")}</strong>
+        <strong>${escapeHtml(company.bookingPlatform && company.bookingPlatform !== "Unknown" ? company.bookingPlatform : "NA")}</strong>
       </div>
       <div class="overview-card">
         <span class="overview-label">Phone</span>
@@ -487,6 +504,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         <strong>${escapeHtml(formatSource(company.source))}</strong>
       </div>
     </div>
+    ${renderReasonChips(company.reasonChips)}
 
     <div class="source-list">
       ${sourceUrls

@@ -564,6 +564,24 @@ a {
   font-size: 0.8rem;
 }
 
+.reason-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.reason-chip {
+  border: 1px solid rgba(44, 62, 80, 0.12);
+  border-radius: 999px;
+  background: #f7f9fb;
+  color: #445061;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 5px 8px;
+}
+
 .row-link {
   display: flex;
   flex-direction: column;

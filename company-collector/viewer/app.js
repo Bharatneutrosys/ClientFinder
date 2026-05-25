@@ -1547,15 +1547,17 @@ function matchesWebsiteCondition(company, condition) {
     return true;
   }
 
+  const websiteStatus = normalizeWebsiteStatus(company.websiteStatus) || deriveWebsiteStatus(company);
+
   if (condition === "has_website") {
-    return company.hasWebsite === true;
+    return ["Has Website", "Weak Website", "Broken Website"].includes(websiteStatus);
   }
 
   if (condition === "no_website") {
-    return company.hasWebsite === false;
+    return ["No Website", "Social Only", "Booking Link Only"].includes(websiteStatus);
   }
 
-  return company.websiteStatus === formatWebsiteCondition(condition);
+  return websiteStatus === formatWebsiteCondition(condition);
 }
 
 function formatMobileAppCondition(value) {
@@ -1702,13 +1704,14 @@ function buildTestProspect(filters) {
     address: `123 Valley View Ln, ${city}, ${stateCode}`,
     phone: "(972) 555-0148",
     website: "",
-    websiteStatus: "Has Website = No",
+    websiteStatus: "No Website",
     hasWebsite: false,
     mobileAppStatus: "Has Mobile App = No",
     hasMobileApp: false,
-    bookingPlatform: "",
+    bookingPlatform: "Unknown",
     rating: 4.6,
     reviews: 82,
+    reasonChips: ["No website found", "Strong reviews", "Phone available", "High opportunity"],
     source: "manual",
     source_url: "",
     lead_score: 92,
@@ -1802,6 +1805,7 @@ async function searchLiveProspects({ businessType, location, state: stateCode, w
 
 function mapLiveProspectToCompany(prospect) {
   const score = Number(prospect.opportunityScore || 0);
+  const websiteStatus = normalizeWebsiteStatus(prospect.websiteStatus) || "Unknown";
 
   return {
     id: prospect.id || prospect.placeId || makeStableManualId(prospect.businessName, prospect.address),
@@ -1823,7 +1827,7 @@ function mapLiveProspectToCompany(prospect) {
     address: prospect.address || "",
     phone: prospect.phone || "",
     website: prospect.websiteUrl || "",
-    websiteStatus: prospect.websiteStatus || "Unknown",
+    websiteStatus,
     hasWebsite: Boolean(prospect.hasWebsite),
     mobileAppStatus: prospect.mobileAppStatus || "Unknown",
     hasMobileApp: prospect.hasMobileApp ?? null,
@@ -1835,6 +1839,7 @@ function mapLiveProspectToCompany(prospect) {
     source_url: prospect.googleProfileUrl || prospect.mapsUrl || "",
     lead_score: score,
     lead_label: score >= 80 ? "High Fit" : score >= 65 ? "Medium Fit" : "Needs Review",
+    reasonChips: normalizeReasonChips(prospect.reasonChips),
     confidence_score: score,
     outreach_ready: false,
     review_status: "new",
@@ -1853,6 +1858,14 @@ function mapLiveProspectToCompany(prospect) {
   };
 }
 
+function normalizeReasonChips(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 4);
+}
+
 function augmentCompaniesWithScannerData(companies) {
   return companies.map((company) => {
     const scanState = scanner.getState(company.id);
@@ -1861,11 +1874,15 @@ function augmentCompaniesWithScannerData(companies) {
     const primaryContact = company.primary_contact || mergedContacts[0] || null;
     const websiteModel = buildWebsiteModel(company);
     const mobileAppModel = buildMobileAppModel(company);
+    const reasonChips = normalizeReasonChips(company.reasonChips).length
+      ? normalizeReasonChips(company.reasonChips)
+      : buildQualificationReasonChips({ ...company, ...websiteModel, ...mobileAppModel });
 
     return applyProspectWorkflow({
       ...company,
       ...websiteModel,
       ...mobileAppModel,
+      reasonChips,
       contacts: mergedContacts,
       primary_contact: primaryContact,
       contacts_found: mergedContacts.length || company.contacts_found || 0,
@@ -1926,6 +1943,41 @@ function applyProspectWorkflow(company) {
   });
 
   return company;
+}
+
+function buildQualificationReasonChips(company) {
+  const reasons = [];
+  const websiteStatus = normalizeWebsiteStatus(company.websiteStatus) || deriveWebsiteStatus(company);
+  const rating = Number(company.rating || 0);
+  const reviewCount = Number(company.reviewCount || company.reviews || 0);
+  const phone = String(company.phone || "").trim();
+  const leadScore = Number(company.lead_score || company.confidence_score || 0);
+
+  if (websiteStatus === "No Website") {
+    reasons.push("No website found");
+  } else if (websiteStatus === "Booking Link Only") {
+    reasons.push("Booking platform only");
+  } else if (websiteStatus === "Social Only") {
+    reasons.push("Social profile only");
+  }
+
+  if (rating >= 4.4 && reviewCount >= 25) {
+    reasons.push("Strong reviews");
+  }
+
+  if (phone) {
+    reasons.push("Phone available");
+  }
+
+  if (leadScore >= 85) {
+    reasons.push("High opportunity");
+  }
+
+  if (!reasons.length || leadScore < 65) {
+    reasons.push("Needs review");
+  }
+
+  return reasons.slice(0, 4);
 }
 
 function getProspectWorkflow(companyId) {
@@ -2061,7 +2113,7 @@ function buildWebsiteModel(company) {
       ? company.hasWebsite
       : typeof company.has_website === "boolean"
         ? company.has_website
-        : ["Has Website = Yes", "Weak Website", "Broken Website"].includes(derivedStatus);
+        : ["Has Website", "Weak Website", "Broken Website"].includes(derivedStatus);
 
   return {
     hasWebsite,
@@ -2097,11 +2149,11 @@ function normalizeWebsiteStatus(value) {
   }
 
   if (normalized.includes("yes") || normalized === "has website") {
-    return "Has Website = Yes";
+    return "Has Website";
   }
 
   if (normalized.includes("no") || normalized === "no website") {
-    return "Has Website = No";
+    return "No Website";
   }
 
   return "";
@@ -2111,7 +2163,7 @@ function deriveWebsiteStatus(company) {
   const website = String(company.website || "").trim();
 
   if (!website) {
-    return "Has Website = No";
+    return "No Website";
   }
 
   const normalizedWebsite = website.toLowerCase();
@@ -2127,15 +2179,15 @@ function deriveWebsiteStatus(company) {
     return "Broken Website";
   }
 
-  return "Has Website = Yes";
+  return "Has Website";
 }
 
 function isSocialUrl(value) {
-  return /(facebook\.com|instagram\.com|linktr\.ee|yelp\.com|google\.com\/maps|g\.page)/i.test(value);
+  return /(facebook\.com|instagram\.com|linktr\.ee|yelp\.com|tiktok\.com|x\.com|twitter\.com|linkedin\.com|google\.com\/maps|g\.page)/i.test(value);
 }
 
 function isBookingUrl(value) {
-  return /(vagaro\.com|booksy\.com|squareup\.com|acuityscheduling\.com|schedulicity\.com|mindbodyonline\.com|fresha\.com|glossgenius\.com|styleseat\.com|setmore\.com|calendly\.com)/i.test(value);
+  return /(vagaro\.com|booksy\.com|square\.site\/appointments|squareup\.com\/appointments|squareup\.com|acuityscheduling\.com|schedulicity\.com|mindbodyonline\.com|fresha\.com|glossgenius\.com|styleseat\.com|setmore\.com|simplybook\.me|bookedin\.com|calendly\.com)/i.test(value);
 }
 
 function buildMobileAppModel(company) {
@@ -2246,14 +2298,17 @@ function deriveBookingPlatform(company) {
   const platforms = [
     ["Vagaro", "vagaro"],
     ["Booksy", "booksy"],
-    ["Square Appointments", "squareup"],
-    ["Acuity Scheduling", "acuityscheduling"],
+    ["Square", "squareup"],
+    ["Square", "square.site/appointments"],
+    ["Acuity", "acuityscheduling"],
     ["Schedulicity", "schedulicity"],
     ["Mindbody", "mindbodyonline"],
     ["Fresha", "fresha"],
     ["GlossGenius", "glossgenius"],
     ["StyleSeat", "styleseat"],
-    ["Setmore", "setmore"],
+    ["Other Booking Platform", "setmore"],
+    ["Other Booking Platform", "simplybook"],
+    ["Other Booking Platform", "bookedin"],
     ["Calendly", "calendly"],
     ["Yelp", "yelp"],
     ["Facebook", "facebook"],
