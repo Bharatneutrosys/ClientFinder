@@ -432,7 +432,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
     const followUpStatus = getFollowUpStatus(company.next_follow_up);
     return `
       <div class="overview-grid">
-        ${renderProcessCard("Current stage", getProspectStage(company))}
+        ${renderStageSelectCard(company)}
         ${renderProcessCard("Last contacted", company.last_contacted_at || "NA")}
         ${renderProcessCard("Next follow-up", company.next_follow_up || "Not scheduled")}
         ${renderProcessCard("Follow-up status", followUpStatus)}
@@ -727,6 +727,21 @@ function renderProcessCard(label, value) {
     <div class="overview-card">
       <span class="overview-label">${escapeHtml(label)}</span>
       <strong>${escapeHtml(value || "NA")}</strong>
+    </div>
+  `;
+}
+
+function renderStageSelectCard(company) {
+  return `
+    <div class="overview-card">
+      <span class="overview-label">Current stage</span>
+      <label class="inline-field">
+        <select aria-label="Current stage" data-prospect-status="1" data-company-id="${escapeAttribute(company.id)}">
+          ${PROSPECT_STAGES.map(
+            (stage) => `<option value="${escapeAttribute(stage)}" ${stage === getProspectStage(company) ? "selected" : ""}>${escapeHtml(stage)}</option>`
+          ).join("")}
+        </select>
+      </label>
     </div>
   `;
 }
