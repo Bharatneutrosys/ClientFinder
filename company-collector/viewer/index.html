@@ -73,8 +73,8 @@
             <label class="search-field">
               <span>Business Type Group</span>
               <select id="industry-filter">
-                <option value="" selected>Any business type</option>
-                <option value="Salon & Beauty">Salon &amp; Beauty</option>
+                <option value="">Any business type</option>
+                <option value="Salon & Beauty" selected>Salon &amp; Beauty</option>
                 <option value="IT Services & Staffing">IT Services &amp; Staffing</option>
                 <option value="Healthcare">Healthcare</option>
                 <option value="Construction">Construction</option>
@@ -105,6 +105,18 @@
                 <option value="">Any website condition</option>
                 <option value="no_website" selected>Has Website = No</option>
                 <option value="has_website">Has Website = Yes</option>
+              </select>
+            </label>
+
+            <label class="search-field">
+              <span>Mobile App Condition</span>
+              <select id="mobile-app-condition-filter">
+                <option value="" selected>Any</option>
+                <option value="no_mobile_app">Has Mobile App = No</option>
+                <option value="has_mobile_app">Has Mobile App = Yes</option>
+                <option value="booking_app_only">Booking App Only</option>
+                <option value="marketplace_app_only">Marketplace App Only</option>
+                <option value="unknown">Unknown</option>
               </select>
             </label>
 

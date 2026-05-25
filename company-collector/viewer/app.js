@@ -75,6 +75,7 @@ const elements = {
   stateFilter: document.querySelector("#state-filter"),
   cityFilter: document.querySelector("#city-filter"),
   websiteConditionFilter: document.querySelector("#website-condition-filter"),
+  mobileAppConditionFilter: document.querySelector("#mobile-app-condition-filter"),
   sourceFilter: document.querySelector("#source-filter"),
   leadScoreFilter: document.querySelector("#lead-score-filter"),
   reviewStatusFilter: document.querySelector("#review-status-filter"),
@@ -233,6 +234,7 @@ function bindEvents() {
     elements.stateFilter,
     elements.cityFilter,
     elements.websiteConditionFilter,
+    elements.mobileAppConditionFilter,
     elements.sourceFilter,
     elements.leadScoreFilter,
     elements.reviewStatusFilter,
@@ -383,11 +385,15 @@ function applyFilters() {
         return false;
       }
 
-      if (filters.websiteCondition === "has_website" && !company.website) {
+      if (filters.websiteCondition === "has_website" && !company.hasWebsite) {
         return false;
       }
 
-      if (filters.websiteCondition === "no_website" && company.website) {
+      if (filters.websiteCondition === "no_website" && company.hasWebsite) {
+        return false;
+      }
+
+      if (!matchesMobileAppCondition(company, filters.mobileAppCondition)) {
         return false;
       }
 
@@ -435,7 +441,7 @@ function applyFilters() {
         return false;
       }
 
-      if (filters.hasWebsite && !company.website) {
+      if (filters.hasWebsite && !company.hasWebsite) {
         return false;
       }
 
@@ -667,6 +673,7 @@ function handleSaveSearch() {
       state: filters.state || "",
       source: filters.source || "",
       websiteCondition: filters.websiteCondition || "",
+      mobileAppCondition: filters.mobileAppCondition || "",
     },
   };
 
@@ -1013,6 +1020,7 @@ function renderSavedSearches() {
       elements.stateFilter.value = saved.filters.state;
       elements.sourceFilter.value = saved.filters.source;
       elements.websiteConditionFilter.value = saved.filters.websiteCondition || "";
+      elements.mobileAppConditionFilter.value = saved.filters.mobileAppCondition || "";
       elements.leadScoreFilter.value = saved.filters.leadScore || "";
       elements.reviewStatusFilter.value = saved.filters.reviewStatus || "";
       elements.contactTypeFilter.value = saved.filters.contactType || "";
@@ -1031,6 +1039,11 @@ function exportVisibleCompaniesCsv() {
     "state",
     "address",
     "website",
+    "websiteStatus",
+    "hasWebsite",
+    "mobileAppStatus",
+    "hasMobileApp",
+    "bookingPlatform",
     "phone",
     "source",
     "lead_score",
@@ -1101,6 +1114,7 @@ function getActiveFilters() {
     industry: elements.industryFilter.value || "",
     source: elements.sourceFilter.value,
     websiteCondition: elements.websiteConditionFilter.value || "",
+    mobileAppCondition: elements.mobileAppConditionFilter.value || "",
     leadScore: elements.leadScoreFilter.value,
     reviewStatus: elements.reviewStatusFilter.value,
     contactType: elements.contactTypeFilter.value,
@@ -1127,6 +1141,58 @@ function formatWebsiteCondition(value) {
   }
 
   return "Any website condition";
+}
+
+function formatMobileAppCondition(value) {
+  if (value === "no_mobile_app") {
+    return "Has Mobile App = No";
+  }
+
+  if (value === "has_mobile_app") {
+    return "Has Mobile App = Yes";
+  }
+
+  if (value === "booking_app_only") {
+    return "Booking App Only";
+  }
+
+  if (value === "marketplace_app_only") {
+    return "Marketplace App Only";
+  }
+
+  if (value === "unknown") {
+    return "Unknown";
+  }
+
+  return "Any";
+}
+
+function matchesMobileAppCondition(company, condition) {
+  if (!condition) {
+    return true;
+  }
+
+  if (condition === "has_mobile_app") {
+    return company.hasMobileApp === true;
+  }
+
+  if (condition === "no_mobile_app") {
+    return company.hasMobileApp === false;
+  }
+
+  if (condition === "booking_app_only") {
+    return company.mobileAppStatus === "Booking App Only";
+  }
+
+  if (condition === "marketplace_app_only") {
+    return company.mobileAppStatus === "Marketplace App Only";
+  }
+
+  if (condition === "unknown") {
+    return company.mobileAppStatus === "Unknown";
+  }
+
+  return true;
 }
 
 function populateStates() {
@@ -1190,9 +1256,13 @@ function augmentCompaniesWithScannerData(companies) {
     const mergedContacts =
       scanState.contacts.length > (company.contacts || []).length ? scanState.contacts : company.contacts || [];
     const primaryContact = company.primary_contact || mergedContacts[0] || null;
+    const websiteModel = buildWebsiteModel(company);
+    const mobileAppModel = buildMobileAppModel(company);
 
     return {
       ...company,
+      ...websiteModel,
+      ...mobileAppModel,
       contacts: mergedContacts,
       primary_contact: primaryContact,
       contacts_found: mergedContacts.length || company.contacts_found || 0,
@@ -1220,9 +1290,173 @@ function buildResultsSubtitle() {
     filters.cityLabel || "All cities",
     filters.state || "All states",
     formatWebsiteCondition(filters.websiteCondition),
+    formatMobileAppCondition(filters.mobileAppCondition),
   ];
 
   return `${state.filteredCompanies.length} matches - ${parts.join(" - ")}`;
+}
+
+function buildWebsiteModel(company) {
+  const hasWebsite =
+    typeof company.hasWebsite === "boolean"
+      ? company.hasWebsite
+      : typeof company.has_website === "boolean"
+        ? company.has_website
+        : Boolean(String(company.website || "").trim());
+
+  return {
+    hasWebsite,
+    websiteStatus: company.websiteStatus || company.website_status || (hasWebsite ? "Has Website = Yes" : "Has Website = No"),
+  };
+}
+
+function buildMobileAppModel(company) {
+  const explicitStatus = normalizeMobileAppStatus(company.mobileAppStatus || company.mobile_app_status);
+  const explicitHasMobileApp = readBooleanish(company.hasMobileApp ?? company.has_mobile_app);
+  const explicitAppUrl = [
+    company.mobileAppUrl,
+    company.mobile_app_url,
+    company.iosAppUrl,
+    company.ios_app_url,
+    company.androidAppUrl,
+    company.android_app_url,
+    company.app_url,
+  ].some((value) => Boolean(String(value || "").trim()));
+  const bookingPlatform = deriveBookingPlatform(company);
+
+  if (explicitStatus) {
+    return {
+      mobileAppStatus: explicitStatus,
+      hasMobileApp: explicitStatus === "Unknown" ? null : explicitStatus !== "Has Mobile App = No",
+      bookingPlatform,
+    };
+  }
+
+  if (explicitHasMobileApp === false) {
+    return {
+      mobileAppStatus: "Has Mobile App = No",
+      hasMobileApp: false,
+      bookingPlatform,
+    };
+  }
+
+  if (bookingPlatform) {
+    return {
+      mobileAppStatus: isMarketplacePlatform(bookingPlatform) ? "Marketplace App Only" : "Booking App Only",
+      hasMobileApp: true,
+      bookingPlatform,
+    };
+  }
+
+  if (explicitHasMobileApp === true || explicitAppUrl) {
+    return {
+      mobileAppStatus: "Has Mobile App = Yes",
+      hasMobileApp: true,
+      bookingPlatform,
+    };
+  }
+
+  return {
+    mobileAppStatus: "Unknown",
+    hasMobileApp: null,
+    bookingPlatform,
+  };
+}
+
+function normalizeMobileAppStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[_-]/g, " ");
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.includes("booking")) {
+    return "Booking App Only";
+  }
+
+  if (normalized.includes("marketplace")) {
+    return "Marketplace App Only";
+  }
+
+  if (normalized === "unknown") {
+    return "Unknown";
+  }
+
+  if (normalized.includes("yes") || normalized === "has mobile app") {
+    return "Has Mobile App = Yes";
+  }
+
+  if (normalized.includes("no") || normalized === "no mobile app") {
+    return "Has Mobile App = No";
+  }
+
+  return "";
+}
+
+function deriveBookingPlatform(company) {
+  const explicitPlatform = String(
+    company.bookingPlatform || company.booking_platform || company.booking_app || company.app_platform || ""
+  ).trim();
+
+  if (explicitPlatform) {
+    return explicitPlatform;
+  }
+
+  const haystack = [
+    company.website,
+    company.source_url,
+    company.booking_url,
+    company.bookingUrl,
+    company.profile_url,
+    company.profileUrl,
+    ...(company.contacts || []).map((contact) => contact.source_url),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  const platforms = [
+    ["Vagaro", "vagaro"],
+    ["Booksy", "booksy"],
+    ["Square Appointments", "squareup"],
+    ["Acuity Scheduling", "acuityscheduling"],
+    ["Schedulicity", "schedulicity"],
+    ["Mindbody", "mindbodyonline"],
+    ["Fresha", "fresha"],
+    ["GlossGenius", "glossgenius"],
+    ["StyleSeat", "styleseat"],
+    ["Setmore", "setmore"],
+    ["Calendly", "calendly"],
+    ["Yelp", "yelp"],
+    ["Facebook", "facebook"],
+    ["Instagram", "instagram"],
+    ["Google Business Profile", "google"],
+    ["Thumbtack", "thumbtack"],
+  ];
+
+  const match = platforms.find(([, token]) => haystack.includes(token));
+  return match ? match[0] : "";
+}
+
+function isMarketplacePlatform(platform) {
+  return ["Yelp", "Facebook", "Instagram", "Google Business Profile", "Thumbtack"].includes(platform);
+}
+
+function readBooleanish(value) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["true", "yes", "1"].includes(normalized)) {
+    return true;
+  }
+
+  if (["false", "no", "0"].includes(normalized)) {
+    return false;
+  }
+
+  return null;
 }
 
 function buildIndustryQuery(industry, keywordLabel) {

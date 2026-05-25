@@ -212,6 +212,9 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
         <button class="row-link" type="button" data-open-details="${escapeAttribute(company.id)}">
           <span class="row-title">${escapeHtml(company.name || "NA")}</span>
           <span class="row-subtitle">${escapeHtml(company.website ? stripProtocol(company.website) : "NA")}</span>
+          <span class="row-subtitle">Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
+          <span class="row-subtitle">Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
+          ${company.bookingPlatform ? `<span class="row-subtitle">Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
           <span class="row-subtitle">${escapeHtml(company.phone || "No business phone")}</span>
         </button>
       </td>
@@ -279,6 +282,9 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId) {
       </div>
       <div class="company-grid-meta">
         <span>${escapeHtml(company.industry || "NA")}</span>
+        <span>Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
+        <span>Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
+        ${company.bookingPlatform ? `<span>Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
         <span>${escapeHtml(String(company.contacts_found || 0))} contacts</span>
         <span>${escapeHtml(bestContact?.name || "No best contact")}</span>
         <span>${escapeHtml(String(company.lead_score || 0))}/100 opportunity score</span>
@@ -414,6 +420,18 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
             ? `<a class="link" href="${escapeAttribute(company.website)}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(company.website))}</a>`
             : "<strong>Has Website = No</strong>"
         }
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Website Status</span>
+        <strong>${escapeHtml(company.websiteStatus || "Unknown")}</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Mobile App Status</span>
+        <strong>${escapeHtml(company.mobileAppStatus || "Unknown")}</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Booking Platform</span>
+        <strong>${escapeHtml(company.bookingPlatform || "NA")}</strong>
       </div>
       <div class="overview-card">
         <span class="overview-label">Phone</span>
