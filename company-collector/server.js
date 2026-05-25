@@ -24,6 +24,17 @@ const app = express();
 const REQUESTED_PORT = Number(process.env.PORT) || 3000;
 const PORT_CANDIDATES = [REQUESTED_PORT, REQUESTED_PORT + 1, REQUESTED_PORT + 2];
 const isVercel = Boolean(process.env.VERCEL);
+const GOOGLE_TEXT_SEARCH_ENDPOINT = "https://places.googleapis.com/v1/places:searchText";
+const GOOGLE_PLACES_FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.formattedAddress",
+  "places.nationalPhoneNumber",
+  "places.rating",
+  "places.userRatingCount",
+  "places.websiteUri",
+  "places.googleMapsUri",
+].join(",");
 
 app.use(express.json());
 app.use("/viewer", express.static(viewerDir));
@@ -32,6 +43,71 @@ await ensureContactsFile();
 
 app.get(["/", "/viewer", "/viewer/"], (_request, response) => {
   response.sendFile(path.join(viewerDir, "index.html"));
+});
+
+app.get("/api/prospects/search", async (request, response) => {
+  try {
+    const apiKey = String(process.env.GOOGLE_PLACES_API_KEY || "").trim();
+
+    if (!apiKey) {
+      response.status(503).json({
+        success: false,
+        prospects: [],
+        error: "Google Places API key is missing.",
+      });
+      return;
+    }
+
+    const businessType = String(request.query.businessType || "Salon").trim();
+    const city = String(request.query.location || "").trim();
+    const state = String(request.query.state || "").trim().toUpperCase();
+    const websiteCondition = String(request.query.websiteCondition || "").trim();
+
+    if (!businessType || !city || !state) {
+      response.status(400).json({
+        success: false,
+        prospects: [],
+        error: "Business type, location, and state are required.",
+      });
+      return;
+    }
+
+    const googleResponse = await fetch(GOOGLE_TEXT_SEARCH_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": GOOGLE_PLACES_FIELD_MASK,
+      },
+      body: JSON.stringify({
+        textQuery: `${businessType} in ${city} ${state}`,
+        maxResultCount: 12,
+      }),
+    });
+
+    if (!googleResponse.ok) {
+      const errorBody = await googleResponse.text();
+      throw new Error(`Google Places failed (${googleResponse.status}): ${compactErrorBody(errorBody)}`);
+    }
+
+    const payload = await googleResponse.json();
+    const places = Array.isArray(payload.places) ? payload.places : [];
+    const prospects = places
+      .map((place) => mapGooglePlaceToProspect(place, { businessType, city, state }))
+      .filter((prospect) => matchesWebsiteCondition(prospect, websiteCondition));
+
+    response.json({
+      success: true,
+      prospects,
+      error: null,
+    });
+  } catch (error) {
+    response.status(502).json({
+      success: false,
+      prospects: [],
+      error: "Unable to load live prospects. You can still add a manual prospect.",
+    });
+  }
 });
 
 app.get("/api/companies", async (_request, response) => {
@@ -697,6 +773,91 @@ function normalizeWebsiteKey(value) {
 function escapeCsvValue(value) {
   const text = String(value ?? "");
   return `"${text.replaceAll('"', '""')}"`;
+}
+
+function mapGooglePlaceToProspect(place, { businessType, city, state }) {
+  const placeId = place?.id || extractPlaceId(place?.name);
+  const websiteUrl = String(place?.websiteUri || "").trim();
+  const rating = Number(place?.rating || 0);
+  const reviewCount = Number(place?.userRatingCount || 0);
+  const opportunityScore = scoreGoogleProspect({ websiteUrl, rating, reviewCount });
+
+  return {
+    id: placeId ? `google-${placeId}` : makeManualId(place?.displayName?.text, place?.formattedAddress),
+    placeId,
+    businessName: place?.displayName?.text || "Unknown",
+    businessType,
+    address: place?.formattedAddress || "",
+    phone: place?.nationalPhoneNumber || "",
+    rating,
+    reviewCount,
+    websiteUrl,
+    websiteStatus: websiteUrl ? "Has Website = Yes" : "Has Website = No",
+    hasWebsite: Boolean(websiteUrl),
+    googleProfileUrl: place?.googleMapsUri || "",
+    mapsUrl: place?.googleMapsUri || "",
+    source: "Google Places",
+    opportunityScore,
+    prospectStatus: "New Lead",
+    mobileAppStatus: "Unknown",
+    hasMobileApp: null,
+    bookingPlatform: "Unknown",
+    city,
+    state,
+  };
+}
+
+function matchesWebsiteCondition(prospect, websiteCondition) {
+  if (!websiteCondition) {
+    return true;
+  }
+
+  if (websiteCondition === "no_website") {
+    return !prospect.hasWebsite;
+  }
+
+  if (websiteCondition === "has_website") {
+    return prospect.hasWebsite;
+  }
+
+  if (websiteCondition === "unknown") {
+    return !prospect.websiteStatus || prospect.websiteStatus === "Unknown";
+  }
+
+  return true;
+}
+
+function scoreGoogleProspect({ websiteUrl, rating, reviewCount }) {
+  let score = websiteUrl ? 58 : 88;
+
+  if (rating >= 4.5) {
+    score += 6;
+  }
+
+  if (reviewCount >= 50) {
+    score += 6;
+  }
+
+  return Math.min(100, score);
+}
+
+function extractPlaceId(resourceName) {
+  const raw = String(resourceName || "").trim();
+  return raw.startsWith("places/") ? raw.slice("places/".length) : raw;
+}
+
+function makeManualId(name, address) {
+  return `google-${String(`${name || "prospect"}-${address || ""}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")}`;
+}
+
+function compactErrorBody(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
 }
 
 function startServer(portCandidates) {

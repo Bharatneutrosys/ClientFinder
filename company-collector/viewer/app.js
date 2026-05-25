@@ -393,18 +393,24 @@ async function handleSearch() {
   elements.collectMoreButton.disabled = true;
 
   try {
-    const payload = await collectCompaniesForLocation({
-      keyword: buildSearchKeyword(filters),
-      city: filters.cityLabel,
+    const payload = await searchLiveProspects({
+      businessType: filters.keywordLabel || DEFAULT_SEARCH_KEYWORD,
+      location: filters.cityLabel,
       state: filters.state,
-      source: mapCollectorSource(filters.source),
+      websiteCondition: filters.websiteCondition,
     });
 
-    await refreshCompanies();
+    state.companies = augmentCompaniesWithScannerData(
+      mergeManualProspects(
+        payload.prospects.map((prospect) => mapLiveProspectToCompany(prospect)),
+        state.manualProspects
+      )
+    );
     applyFilters();
-    const added = Number(payload.stats?.addedCompanies || 0);
-    const total = Number(payload.stats?.totalCompanies || state.companies.length);
-    elements.statusMessage.textContent = `Search complete. Added ${added} new prospect${added === 1 ? "" : "s"}. Total saved: ${total}.`;
+    elements.statusMessage.textContent =
+      state.filteredCompanies.length > 0
+        ? `Search complete. Found ${state.filteredCompanies.length} live prospect${state.filteredCompanies.length === 1 ? "" : "s"}.`
+        : "No live prospects matched. You can still add a manual prospect.";
   } catch (error) {
     elements.statusMessage.textContent = formatFriendlyError(error);
   } finally {
@@ -1627,6 +1633,13 @@ function findDuplicateProspect(prospect, candidates) {
   });
 }
 
+function makeStableManualId(name, address) {
+  return `manual-${String(`${name || "prospect"}-${address || ""}`)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")}`;
+}
+
 async function collectCompaniesForLocation({ keyword, city, state: stateCode, source }) {
   const response = await fetch("/api/collect-companies", {
     method: "POST",
@@ -1647,6 +1660,80 @@ async function collectCompaniesForLocation({ keyword, city, state: stateCode, so
   }
 
   return payload;
+}
+
+async function searchLiveProspects({ businessType, location, state: stateCode, websiteCondition }) {
+  const params = new URLSearchParams({
+    businessType,
+    location,
+    state: stateCode,
+    websiteCondition: websiteCondition || "",
+  });
+  const response = await fetch(`/api/prospects/search?${params.toString()}`, {
+    cache: "no-store",
+  });
+  const payload = await response.json();
+
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.error || "Unable to load live prospects. You can still add a manual prospect.");
+  }
+
+  return {
+    prospects: Array.isArray(payload.prospects) ? payload.prospects : [],
+  };
+}
+
+function mapLiveProspectToCompany(prospect) {
+  const score = Number(prospect.opportunityScore || 0);
+
+  return {
+    id: prospect.id || prospect.placeId || makeStableManualId(prospect.businessName, prospect.address),
+    placeId: prospect.placeId || "",
+    name: prospect.businessName || "Unknown",
+    keyword: prospect.businessType || DEFAULT_SEARCH_KEYWORD,
+    industry: inferCompanyIndustry({
+      keyword: prospect.businessType,
+      name: prospect.businessName,
+      website: prospect.websiteUrl,
+    }),
+    industry_tags: buildIndustryTags({
+      keyword: prospect.businessType,
+      name: prospect.businessName,
+      website: prospect.websiteUrl,
+    }),
+    city: prospect.city || elements.cityFilter.value || "",
+    state: prospect.state || elements.stateFilter.value || "",
+    address: prospect.address || "",
+    phone: prospect.phone || "",
+    website: prospect.websiteUrl || "",
+    websiteStatus: prospect.websiteStatus || "Unknown",
+    hasWebsite: Boolean(prospect.hasWebsite),
+    mobileAppStatus: prospect.mobileAppStatus || "Unknown",
+    hasMobileApp: prospect.hasMobileApp ?? null,
+    bookingPlatform: prospect.bookingPlatform || "Unknown",
+    rating: Number(prospect.rating || 0),
+    reviews: Number(prospect.reviewCount || 0),
+    reviewCount: Number(prospect.reviewCount || 0),
+    source: "google_places",
+    source_url: prospect.googleProfileUrl || prospect.mapsUrl || "",
+    lead_score: score,
+    lead_label: score >= 80 ? "High Fit" : score >= 65 ? "Medium Fit" : "Needs Review",
+    confidence_score: score,
+    outreach_ready: false,
+    review_status: "new",
+    prospect_stage: prospect.prospectStatus || "New Lead",
+    stage: prospect.prospectStatus || "New Lead",
+    contacts: [],
+    contacts_found: 0,
+    primary_contact: null,
+    has_primary_contact: false,
+    has_email: false,
+    has_valid_email: false,
+    has_phone: Boolean(prospect.phone),
+    needs_review: false,
+    scan_status: SCAN_STATUS.NOT_SCANNED,
+    collected_at: new Date().toISOString(),
+  };
 }
 
 function augmentCompaniesWithScannerData(companies) {
@@ -2103,7 +2190,7 @@ function formatFriendlyError(error) {
   }
 
   if (message.toLowerCase().includes("failed to fetch")) {
-    return "Search provider could not be reached. Try again or switch source.";
+    return "Unable to load live prospects. You can still add a manual prospect.";
   }
 
   return message;
