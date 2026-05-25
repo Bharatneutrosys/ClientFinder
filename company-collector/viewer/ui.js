@@ -14,9 +14,11 @@ const PROSPECT_STAGES = [
   "Contract Received",
   "Follow Up Later",
   "Not Interested",
+  "Lost",
 ];
 
 const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received"]);
+const COMMUNICATION_METHODS = ["Call", "Email", "SMS", "WhatsApp", "Onsite Visit", "LinkedIn", "Other"];
 
 export function renderResultsView({
   companies,
@@ -24,9 +26,11 @@ export function renderResultsView({
   viewMode,
   scanner,
   selectedCompanyId,
+  savedCompanies,
   onOpenDetails,
   onScanCompany,
   onRetryScan,
+  onToggleSavedCompany,
 }) {
   if (!companies.length) {
     container.innerHTML = "";
@@ -36,11 +40,11 @@ export function renderResultsView({
   if (viewMode === "grid") {
     container.className = "results-container grid-view";
     container.innerHTML = companies
-      .map((company) => renderCompanyGridCard(company, scanner.getState(company.id), selectedCompanyId))
+      .map((company) => renderCompanyGridCard(company, scanner.getState(company.id), selectedCompanyId, savedCompanies))
       .join("");
   } else {
     container.className = "results-container list-view";
-    container.innerHTML = renderCompanyTable(companies, scanner, selectedCompanyId);
+    container.innerHTML = renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies);
   }
 
   container.querySelectorAll("[data-open-details]").forEach((button) => {
@@ -54,6 +58,10 @@ export function renderResultsView({
   container.querySelectorAll("[data-retry-scan]").forEach((button) => {
     button.addEventListener("click", () => onRetryScan(button.getAttribute("data-retry-scan")));
   });
+
+  container.querySelectorAll("[data-save-company]").forEach((button) => {
+    button.addEventListener("click", () => onToggleSavedCompany(button.getAttribute("data-save-company")));
+  });
 }
 
 export function renderDetailPanel({
@@ -66,7 +74,8 @@ export function renderDetailPanel({
   onRetryScan,
   onToggleSavedCompany,
   onUpdateProspectStatus,
-  onAddCommunicationNote,
+  onAddCommunicationEntry,
+  onAddProspectNote,
   onSetNextFollowUp,
   onApproveContact,
   onMarkBadContact,
@@ -180,7 +189,15 @@ export function renderDetailPanel({
   if (noteButton) {
     noteButton.addEventListener("click", () => {
       const textarea = container.querySelector("[data-communication-note-input]");
-      onAddCommunicationNote(noteButton.getAttribute("data-add-communication-note"), textarea?.value || "");
+      onAddCommunicationEntry(readCommunicationPayload(container, noteButton.getAttribute("data-add-communication-note")));
+    });
+  }
+
+  const prospectNoteButton = container.querySelector("[data-add-prospect-note]");
+  if (prospectNoteButton) {
+    prospectNoteButton.addEventListener("click", () => {
+      const textarea = container.querySelector("[data-prospect-note-input]");
+      onAddProspectNote(prospectNoteButton.getAttribute("data-add-prospect-note"), textarea?.value || "");
     });
   }
 
@@ -200,7 +217,7 @@ export function renderDetailPanel({
   });
 }
 
-function renderCompanyTable(companies, scanner, selectedCompanyId) {
+function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies) {
   return `
     <div class="table-shell">
       <table class="results-table">
@@ -217,7 +234,7 @@ function renderCompanyTable(companies, scanner, selectedCompanyId) {
         </thead>
         <tbody>
           ${companies
-            .map((company) => renderCompanyRow(company, scanner.getState(company.id), selectedCompanyId))
+            .map((company) => renderCompanyRow(company, scanner.getState(company.id), selectedCompanyId, savedCompanies))
             .join("")}
         </tbody>
       </table>
@@ -225,12 +242,13 @@ function renderCompanyTable(companies, scanner, selectedCompanyId) {
   `;
 }
 
-function renderCompanyRow(company, scanState, selectedCompanyId) {
+function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies) {
   const bestContact = company.primary_contact || null;
   const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = scanState.failureReason || company.scan_failure_reason || "";
   const confidence = Number(bestContact?.confidence_score || company.confidence_score || 0);
   const leadScore = Number(company.lead_score || 0);
+  const isSaved = isSavedProspect(company, savedCompanies);
 
   return `
     <tr class="${company.id === selectedCompanyId ? "selected" : ""}">
@@ -277,6 +295,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
       </td>
       <td>
         <div class="table-actions">
+          <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save Prospect"}</button>
           <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open</button>
           <button class="secondary-btn" type="button" data-scan-company="${escapeAttribute(company.id)}">
             ${scanState.status === SCAN_STATUS.SCANNING ? "Scanning..." : "Deep Scan"}
@@ -293,14 +312,15 @@ function renderCompanyRow(company, scanState, selectedCompanyId) {
   `;
 }
 
-function renderCompanyGridCard(company, scanState, selectedCompanyId) {
+function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompanies) {
   const bestContact = company.primary_contact || null;
   const confidence = Number(company.lead_score || bestContact?.confidence_score || company.confidence_score || 0);
   const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = scanState.failureReason || company.scan_failure_reason || "";
+  const isSaved = isSavedProspect(company, savedCompanies);
 
   return `
-    <article class="company-grid-card ${company.id === selectedCompanyId ? "selected" : ""}">
+    <article class="company-grid-card ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
       <div class="company-grid-top">
         <div>
           <h3>${escapeHtml(company.name || "NA")}</h3>
@@ -321,6 +341,7 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId) {
         <span>${company.outreach_ready ? "Outreach ready" : "Not outreach ready"}</span>
       </div>
       <div class="table-actions">
+        <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
         <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open Details</button>
         <button class="secondary-btn" type="button" data-scan-company="${escapeAttribute(company.id)}">
           ${scanState.status === SCAN_STATUS.SCANNING ? "Scanning..." : "Deep Scan"}
@@ -341,13 +362,37 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
   if (activeTab === "communication") {
     return `
       <section class="workflow-card">
-        <p class="detail-section-title">Communication Note</p>
-        <textarea class="workflow-textarea" data-communication-note-input rows="4" placeholder="Call outcome, message sent, objection, or next step"></textarea>
+        <p class="detail-section-title">Add Communication</p>
+        <div class="workflow-form-grid">
+          <label class="inline-field">
+            <span>Date</span>
+            <input type="date" value="${escapeAttribute(getTodayDateInput())}" data-communication-date />
+          </label>
+          <label class="inline-field">
+            <span>Method</span>
+            <select data-communication-method>
+              ${COMMUNICATION_METHODS.map((method) => `<option value="${escapeAttribute(method)}">${escapeHtml(method)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Outcome/Status</span>
+            <input type="text" data-communication-outcome placeholder="Reached owner, left voicemail, replied, no answer" />
+          </label>
+          <label class="inline-field">
+            <span>Next Action</span>
+            <input type="text" data-communication-next-action placeholder="Call again, send quote, schedule visit" />
+          </label>
+          <label class="inline-field">
+            <span>Next Follow-Up Date</span>
+            <input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-communication-follow-up />
+          </label>
+        </div>
+        <textarea class="workflow-textarea" data-communication-note-input rows="4" placeholder="Notes from the communication"></textarea>
         <div class="workflow-actions">
-          <button class="primary-btn" type="button" data-add-communication-note="${escapeAttribute(company.id)}">Add Note</button>
+          <button class="primary-btn" type="button" data-add-communication-note="${escapeAttribute(company.id)}">Add Communication</button>
         </div>
       </section>
-      ${renderCommunicationNotes(company)}
+      ${renderCommunicationLog(company)}
       ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("NA - no verified public contact person found after deep website scan.")}
       <div class="detail-section">
         <p class="detail-section-title">Contact Details</p>
@@ -371,7 +416,14 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
 
   if (activeTab === "notes") {
     return `
-      ${renderCommunicationNotes(company)}
+      <section class="workflow-card">
+        <p class="detail-section-title">Add Note</p>
+        <textarea class="workflow-textarea" data-prospect-note-input rows="4" placeholder="Internal note, qualification detail, pricing context, or client preference"></textarea>
+        <div class="workflow-actions">
+          <button class="primary-btn" type="button" data-add-prospect-note="${escapeAttribute(company.id)}">Add Note</button>
+        </div>
+      </section>
+      ${renderProspectNotes(company)}
       <div class="overview-card">
         <span class="overview-label">Private context</span>
         <strong>${escapeHtml((company.lead_reasons || []).join(", ") || "No notes captured yet")}</strong>
@@ -396,6 +448,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
   }
 
   if (activeTab === "next_actions") {
+    const followUpStatus = getFollowUpStatus(company.next_follow_up);
     return `
       <div class="activity-list">
         <div class="activity-item">
@@ -412,6 +465,20 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
             <strong>${escapeHtml(company.next_follow_up || "Not scheduled")}</strong>
           </div>
         </div>
+        <div class="activity-item">
+          <span class="activity-dot"></span>
+          <div>
+            <p>Last contacted</p>
+            <strong>${escapeHtml(company.last_contacted_at || "NA")}</strong>
+          </div>
+        </div>
+        <div class="activity-item">
+          <span class="activity-dot"></span>
+          <div>
+            <p>Follow-up status</p>
+            <strong>${escapeHtml(followUpStatus)}</strong>
+          </div>
+        </div>
         <section class="workflow-card">
           <p class="detail-section-title">Set Next Follow-up</p>
           <div class="workflow-inline">
@@ -426,7 +493,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
           <span class="activity-dot"></span>
           <div>
             <p>Suggested next action</p>
-            <strong>${escapeHtml(getSuggestedNextAction(company))}</strong>
+            <strong>${escapeHtml(company.next_action || getSuggestedNextAction(company))}</strong>
           </div>
         </div>
         <div class="activity-item">
@@ -603,16 +670,46 @@ function renderContactListItem(contact, isPrimary = false) {
   `;
 }
 
-function renderCommunicationNotes(company) {
-  const notes = Array.isArray(company.communication_notes) ? company.communication_notes : [];
+function renderCommunicationLog(company) {
+  const entries = Array.isArray(company.communication_logs) ? company.communication_logs : [];
 
-  if (!notes.length) {
-    return renderNaPanel("No communication notes saved yet.");
+  if (!entries.length) {
+    return renderNaPanel("No communication entries saved yet.");
   }
 
   return `
     <section class="workflow-card">
       <p class="detail-section-title">Communication History</p>
+      <div class="activity-list">
+        ${entries
+          .map(
+            (entry) => `
+              <div class="activity-item">
+                <span class="activity-dot"></span>
+                <div>
+                  <p>${escapeHtml(entry.date || formatDate(entry.created_at))} - ${escapeHtml(entry.method || "Other")} - ${escapeHtml(entry.outcome || "No outcome")}</p>
+                  <strong>${escapeHtml(entry.notes || "NA")}</strong>
+                  <p>Next: ${escapeHtml(entry.next_action || "NA")}${entry.next_follow_up ? ` on ${escapeHtml(entry.next_follow_up)}` : ""}</p>
+                </div>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderProspectNotes(company) {
+  const notes = Array.isArray(company.notes) ? company.notes : [];
+
+  if (!notes.length) {
+    return renderNaPanel("No prospect notes saved yet.");
+  }
+
+  return `
+    <section class="workflow-card">
+      <p class="detail-section-title">Notes</p>
       <div class="activity-list">
         ${notes
           .map(
@@ -709,6 +806,18 @@ function readContactPayload(button) {
     companyWebsite: button.getAttribute("data-company-website") || "",
     email: button.getAttribute("data-email") || "",
     phone: button.getAttribute("data-phone") || "",
+  };
+}
+
+function readCommunicationPayload(container, companyId) {
+  return {
+    companyId,
+    date: container.querySelector("[data-communication-date]")?.value || "",
+    method: container.querySelector("[data-communication-method]")?.value || "Other",
+    outcome: container.querySelector("[data-communication-outcome]")?.value || "",
+    notes: container.querySelector("[data-communication-note-input]")?.value || "",
+    nextAction: container.querySelector("[data-communication-next-action]")?.value || "",
+    nextFollowUp: container.querySelector("[data-communication-follow-up]")?.value || "",
   };
 }
 
@@ -866,6 +975,40 @@ function getSuggestedNextAction(company) {
   }
 
   return "Update communication status after the next touchpoint.";
+}
+
+function getFollowUpStatus(dateValue) {
+  const dateKey = String(dateValue || "").slice(0, 10);
+  if (!dateKey) {
+    return "Not scheduled";
+  }
+
+  const today = getTodayDateInput();
+  if (dateKey < today) {
+    return "Overdue";
+  }
+
+  if (dateKey === today) {
+    return "Due today";
+  }
+
+  return "Upcoming";
+}
+
+function getTodayDateInput() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isSavedProspect(company, savedCompanies) {
+  if (!company) {
+    return false;
+  }
+
+  return Boolean(company.is_saved_prospect) || (Array.isArray(savedCompanies) && savedCompanies.includes(company.id));
 }
 
 function renderConversionPlaceholder(company) {

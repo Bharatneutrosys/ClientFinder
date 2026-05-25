@@ -565,9 +565,11 @@ function render() {
     viewMode: state.viewMode,
     scanner,
     selectedCompanyId: state.selectedCompanyId,
+    savedCompanies: state.savedCompanies,
     onOpenDetails: openDetails,
     onScanCompany: handleScanCompany,
     onRetryScan: handleRetryScan,
+    onToggleSavedCompany: toggleSavedCompany,
   });
 
   renderDetail();
@@ -938,7 +940,8 @@ function renderDetail() {
     onRetryScan: handleRetryScan,
     onToggleSavedCompany: toggleSavedCompany,
     onUpdateProspectStatus: updateProspectStatus,
-    onAddCommunicationNote: addCommunicationNote,
+    onAddCommunicationEntry: addCommunicationEntry,
+    onAddProspectNote: addProspectNote,
     onSetNextFollowUp: setNextFollowUp,
     onApproveContact: (payload) => handleReviewUpdate(payload, "approved"),
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
@@ -957,15 +960,26 @@ function toggleSavedCompany(companyId) {
     return;
   }
 
-  if (state.savedCompanies.includes(companyId)) {
-    state.savedCompanies = state.savedCompanies.filter((id) => id !== companyId);
+  const company = state.companies.find((item) => item.id === companyId);
+  const existingSavedId = company ? findSavedProspectId(company) : companyId;
+
+  if (existingSavedId) {
+    state.savedCompanies = state.savedCompanies.filter((id) => id !== existingSavedId);
+    if (existingSavedId !== companyId) {
+      state.savedCompanies = state.savedCompanies.filter((id) => id !== companyId);
+    }
     elements.statusMessage.textContent = "Prospect removed from saved.";
   } else {
     state.savedCompanies = [...state.savedCompanies, companyId];
+    ensureProspectWorkflow(companyId, company);
     elements.statusMessage.textContent = "Prospect saved.";
   }
 
   persistSavedCompanies();
+  if (company) {
+    applyProspectWorkflow(company);
+  }
+  updateSummary();
   applyFilters();
 }
 
@@ -975,6 +989,7 @@ function updateProspectStatus(companyId, nextStatus) {
     return;
   }
 
+  ensureSavedProspect(company);
   const workflow = getProspectWorkflow(companyId);
   state.prospectWorkflows[companyId] = {
     ...workflow,
@@ -984,38 +999,85 @@ function updateProspectStatus(companyId, nextStatus) {
   persistProspectWorkflows();
   applyProspectWorkflow(company);
   elements.statusMessage.textContent = `Updated ${company.name || "prospect"} status to ${nextStatus}.`;
+  updateSummary();
   applyFilters();
 }
 
-function addCommunicationNote(companyId, noteText) {
-  const company = state.companies.find((item) => item.id === companyId);
-  const text = String(noteText || "").trim();
-  if (!company || !text) {
-    elements.statusMessage.textContent = "Enter a communication note before saving.";
+function addCommunicationEntry(payload) {
+  const company = state.companies.find((item) => item.id === payload.companyId);
+  const notes = String(payload.notes || "").trim();
+  const outcome = String(payload.outcome || "").trim();
+  const nextAction = String(payload.nextAction || "").trim();
+  if (!company || (!notes && !outcome && !nextAction)) {
+    elements.statusMessage.textContent = "Enter communication details before saving.";
     return;
   }
 
-  const workflow = getProspectWorkflow(companyId);
-  const communicationNotes = Array.isArray(workflow.communication_notes)
-    ? workflow.communication_notes
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(company.id);
+  const communicationLogs = Array.isArray(workflow.communication_logs)
+    ? workflow.communication_logs
     : [];
+  const date = payload.date || getTodayDateKey();
+  const nextFollowUp = String(payload.nextFollowUp || "").trim();
+
+  state.prospectWorkflows[company.id] = {
+    ...workflow,
+    communication_logs: [
+      {
+        id: `communication-${Date.now()}`,
+        date,
+        method: payload.method || "Other",
+        outcome,
+        notes,
+        next_action: nextAction,
+        next_follow_up: nextFollowUp,
+        created_at: new Date().toISOString(),
+      },
+      ...communicationLogs,
+    ].slice(0, 25),
+    last_contacted_at: date,
+    next_action: nextAction || workflow.next_action || "",
+    next_follow_up: nextFollowUp || workflow.next_follow_up || "",
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  elements.statusMessage.textContent = `Added communication entry for ${company.name || "prospect"}.`;
+  renderDetail();
+  renderTodayFollowups();
+  updateSummary();
+}
+
+function addProspectNote(companyId, noteText) {
+  const company = state.companies.find((item) => item.id === companyId);
+  const text = String(noteText || "").trim();
+  if (!company || !text) {
+    elements.statusMessage.textContent = "Enter a note before saving.";
+    return;
+  }
+
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(companyId);
+  const notes = Array.isArray(workflow.notes) ? workflow.notes : [];
 
   state.prospectWorkflows[companyId] = {
     ...workflow,
-    communication_notes: [
+    notes: [
       {
         id: `note-${Date.now()}`,
         text,
         created_at: new Date().toISOString(),
       },
-      ...communicationNotes,
-    ].slice(0, 25),
+      ...notes,
+    ].slice(0, 50),
     updated_at: new Date().toISOString(),
   };
   persistProspectWorkflows();
   applyProspectWorkflow(company);
-  elements.statusMessage.textContent = `Added communication note for ${company.name || "prospect"}.`;
+  elements.statusMessage.textContent = `Added note for ${company.name || "prospect"}.`;
   renderDetail();
+  updateSummary();
 }
 
 function setNextFollowUp(companyId, followUpDate) {
@@ -1025,6 +1087,7 @@ function setNextFollowUp(companyId, followUpDate) {
     return;
   }
 
+  ensureSavedProspect(company);
   const workflow = getProspectWorkflow(companyId);
   state.prospectWorkflows[companyId] = {
     ...workflow,
@@ -1036,22 +1099,26 @@ function setNextFollowUp(companyId, followUpDate) {
   elements.statusMessage.textContent = nextFollowUpDate
     ? `Set next follow-up for ${company.name || "prospect"} to ${nextFollowUpDate}.`
     : `Cleared next follow-up for ${company.name || "prospect"}.`;
+  updateSummary();
   applyFilters();
 }
 
 function updateSummary() {
-  const noWebsiteCount = state.companies.filter((company) => !company.website).length;
-  const websiteFoundCount = state.companies.filter((company) => Boolean(company.website)).length;
-  const bestProspectsCount = state.companies.filter((company) => company.lead_label === "High Fit").length;
-  const outreachReadyCount = state.companies.filter((company) => company.outreach_ready).length;
+  const savedProspects = getSavedProspectCompanies();
+  const followUpsDueToday = savedProspects.filter((company) => getFollowUpState(company.next_follow_up) === "due_today");
+  const overdueFollowUps = savedProspects.filter((company) => getFollowUpState(company.next_follow_up) === "overdue");
 
-  elements.totalCompanies.textContent = String(state.companies.length);
-  elements.companiesScanned.textContent = String(noWebsiteCount);
-  elements.primaryContacts.textContent = String(websiteFoundCount);
-  elements.verifiedEmails.textContent = String(bestProspectsCount);
-  elements.highConfidenceCount.textContent = String(outreachReadyCount);
+  elements.totalCompanies.textContent = String(savedProspects.length);
+  elements.companiesScanned.textContent = String(followUpsDueToday.length);
+  elements.primaryContacts.textContent = String(overdueFollowUps.length);
+  elements.verifiedEmails.textContent = String(
+    savedProspects.filter((company) => company.prospect_stage === "Quote Sent").length
+  );
+  elements.highConfidenceCount.textContent = String(
+    savedProspects.filter((company) => company.prospect_stage === "Contract Expected").length
+  );
   elements.needsReview.textContent = String(
-    state.companies.filter((company) => company.needs_review || company.lead_label === "Needs Review").length
+    savedProspects.filter((company) => company.prospect_stage === "Contract Received").length
   );
   if (elements.guessedEmails) {
     elements.guessedEmails.textContent = "0";
@@ -1145,10 +1212,12 @@ function renderTodayFollowups() {
     return;
   }
 
-  const today = getTodayDateKey();
-  const dueCompanies = state.companies
-    .filter((company) => normalizeDateKey(company.next_follow_up) === today)
-    .sort((left, right) => String(left.name || "").localeCompare(String(right.name || "")));
+  const dueCompanies = getSavedProspectCompanies()
+    .filter((company) => ["due_today", "overdue"].includes(getFollowUpState(company.next_follow_up)))
+    .sort((left, right) =>
+      String(left.next_follow_up || "").localeCompare(String(right.next_follow_up || "")) ||
+      String(left.name || "").localeCompare(String(right.name || ""))
+    );
 
   elements.todayFollowupCount.textContent = String(dueCompanies.length);
 
@@ -1163,9 +1232,10 @@ function renderTodayFollowups() {
         <button class="followup-item" type="button" data-followup-company="${escapeAttribute(company.id)}">
           <span>
             <strong>${escapeHtml(company.name || "NA")}</strong>
-            <small>${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")} - ${escapeHtml(company.prospect_stage || "New Lead")}</small>
+            <small>${escapeHtml(company.phone || "No phone")} - ${escapeHtml(company.prospect_stage || "New Lead")}</small>
+            <small>${escapeHtml(company.next_action || "No next action set")}</small>
           </span>
-          <span>${escapeHtml(company.next_follow_up || today)}</span>
+          <span>${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
         </button>
       `
     )
@@ -1517,16 +1587,35 @@ function applyProspectWorkflow(company) {
   }
 
   const workflow = getProspectWorkflow(company.id);
-  const communicationNotes = Array.isArray(workflow.communication_notes)
-    ? workflow.communication_notes
+  const communicationLogs = Array.isArray(workflow.communication_logs)
+    ? workflow.communication_logs
     : [];
+  const legacyCommunicationNotes = Array.isArray(workflow.communication_notes)
+    ? workflow.communication_notes.map((note) => ({
+        id: note.id || `legacy-${Date.now()}`,
+        date: normalizeDateKey(note.created_at) || "",
+        method: "Other",
+        outcome: "",
+        notes: note.text || "",
+        next_action: "",
+        next_follow_up: "",
+        created_at: note.created_at || "",
+      }))
+    : [];
+  const notes = Array.isArray(workflow.notes) ? workflow.notes : [];
+  const allCommunicationLogs = communicationLogs.length ? communicationLogs : legacyCommunicationNotes;
+  const lastCommunication = allCommunicationLogs[0] || null;
 
   Object.assign(company, {
     prospect_stage: workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead",
     stage: workflow.prospect_stage || company.stage || company.prospect_stage || "New Lead",
     next_follow_up: workflow.next_follow_up || company.next_follow_up || "",
-    communication_notes: communicationNotes,
-    latest_communication_note: communicationNotes[0]?.text || "",
+    next_action: workflow.next_action || lastCommunication?.next_action || "",
+    last_contacted_at: workflow.last_contacted_at || lastCommunication?.date || "",
+    communication_logs: allCommunicationLogs,
+    notes,
+    latest_communication_note: lastCommunication?.notes || "",
+    is_saved_prospect: Boolean(findSavedProspectId(company)),
     workflow_updated_at: workflow.updated_at || "",
   });
 
@@ -1535,6 +1624,97 @@ function applyProspectWorkflow(company) {
 
 function getProspectWorkflow(companyId) {
   return state.prospectWorkflows[companyId] || {};
+}
+
+function ensureProspectWorkflow(companyId, company) {
+  if (!companyId || state.prospectWorkflows[companyId]) {
+    return;
+  }
+
+  state.prospectWorkflows[companyId] = {
+    prospect_stage: company?.prospect_stage || company?.stage || "New Lead",
+    communication_logs: [],
+    notes: [],
+    next_follow_up: company?.next_follow_up || "",
+    next_action: company?.next_action || "",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+}
+
+function ensureSavedProspect(company) {
+  if (!company?.id) {
+    return;
+  }
+
+  if (!findSavedProspectId(company)) {
+    state.savedCompanies = [...state.savedCompanies, company.id];
+    persistSavedCompanies();
+  }
+
+  ensureProspectWorkflow(company.id, company);
+}
+
+function findSavedProspectId(company) {
+  if (!company) {
+    return "";
+  }
+
+  const companyKeys = getProspectIdentityKeys(company);
+  return (
+    state.savedCompanies.find((savedId) => {
+      if (savedId === company.id) {
+        return true;
+      }
+
+      const savedCompany = state.companies.find((item) => item.id === savedId);
+      if (!savedCompany) {
+        return false;
+      }
+
+      const savedKeys = getProspectIdentityKeys(savedCompany);
+      return companyKeys.some((key) => savedKeys.includes(key));
+    }) || ""
+  );
+}
+
+function getProspectIdentityKeys(company) {
+  const keys = [
+    company.id,
+    company.website,
+    company.phone,
+    [company.name, company.address].filter(Boolean).join("|"),
+    [company.name, company.city, company.state].filter(Boolean).join("|"),
+  ];
+
+  return keys
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function getSavedProspectCompanies() {
+  return state.companies
+    .filter((company) => Boolean(findSavedProspectId(company)))
+    .map((company) => applyProspectWorkflow(company));
+}
+
+function getFollowUpState(dateValue) {
+  const dateKey = normalizeDateKey(dateValue);
+  if (!dateKey) {
+    return "none";
+  }
+
+  const today = getTodayDateKey();
+  if (dateKey < today) {
+    return "overdue";
+  }
+
+  if (dateKey === today) {
+    return "due_today";
+  }
+
+  return "upcoming";
 }
 
 function buildResultsSubtitle() {
@@ -2009,45 +2189,44 @@ function downloadBlob(filename, content) {
 }
 
 function loadSavedSearches() {
-  try {
-    const raw = localStorage.getItem(SAVED_SEARCHES_KEY);
-    const parsed = JSON.parse(raw || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    return [];
-  }
+  const parsed = readLocalJson(SAVED_SEARCHES_KEY, []);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function persistSavedSearches() {
-  localStorage.setItem(SAVED_SEARCHES_KEY, JSON.stringify(state.savedSearches));
+  writeLocalJson(SAVED_SEARCHES_KEY, state.savedSearches);
 }
 
 function loadSavedCompanies() {
-  try {
-    const raw = localStorage.getItem(SAVED_COMPANIES_KEY);
-    const parsed = JSON.parse(raw || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    return [];
-  }
+  const parsed = readLocalJson(SAVED_COMPANIES_KEY, []);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function persistSavedCompanies() {
-  localStorage.setItem(SAVED_COMPANIES_KEY, JSON.stringify(state.savedCompanies));
+  state.savedCompanies = [...new Set(state.savedCompanies.filter(Boolean))];
+  writeLocalJson(SAVED_COMPANIES_KEY, state.savedCompanies);
 }
 
 function loadProspectWorkflows() {
-  try {
-    const raw = localStorage.getItem(PROSPECT_WORKFLOWS_KEY);
-    const parsed = JSON.parse(raw || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch (error) {
-    return {};
-  }
+  const parsed = readLocalJson(PROSPECT_WORKFLOWS_KEY, {});
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
 }
 
 function persistProspectWorkflows() {
-  localStorage.setItem(PROSPECT_WORKFLOWS_KEY, JSON.stringify(state.prospectWorkflows));
+  writeLocalJson(PROSPECT_WORKFLOWS_KEY, state.prospectWorkflows);
+}
+
+function readLocalJson(key, fallbackValue) {
+  try {
+    const raw = localStorage.getItem(key);
+    return JSON.parse(raw || JSON.stringify(fallbackValue));
+  } catch (error) {
+    return fallbackValue;
+  }
+}
+
+function writeLocalJson(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
 }
 
 function getTodayDateKey() {
