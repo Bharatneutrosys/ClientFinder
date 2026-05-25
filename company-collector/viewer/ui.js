@@ -440,6 +440,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         ${renderProcessCard("Quote status", company.quote_status || "Not Started")}
         ${renderProcessCard("Next action", company.next_action || getSuggestedNextAction(company))}
       </div>
+      ${renderStageUpdateNote(company)}
       <section class="workflow-card">
         <p class="detail-section-title">Follow-up Plan</p>
         <div class="workflow-form-grid">
@@ -743,6 +744,16 @@ function renderStageSelectCard(company) {
         </select>
       </label>
     </div>
+  `;
+}
+
+function renderStageUpdateNote(company) {
+  if (company.stageUpdateSource !== "process" || !company.stageUpdatedAt) {
+    return "";
+  }
+
+  return `
+    <p class="workflow-note">Stage updated to ${escapeHtml(getProspectStage(company))} from process checklist.</p>
   `;
 }
 

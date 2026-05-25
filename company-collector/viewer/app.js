@@ -1166,11 +1166,16 @@ function updateProspectStatus(companyId, nextStatus) {
 
   ensureSavedProspect(company);
   const workflow = getProspectWorkflow(companyId);
+  const now = new Date().toISOString();
   state.prospectWorkflows[companyId] = {
     ...workflow,
+    currentStage: nextStatus,
     prospect_stage: nextStatus,
     manual_stage_override: true,
-    updated_at: new Date().toISOString(),
+    stageUpdateSource: "manual",
+    stageUpdatedAt: now,
+    lastUpdatedAt: now,
+    updated_at: now,
   };
   persistProspectWorkflows();
   applyProspectWorkflow(company);
@@ -1304,21 +1309,30 @@ function toggleMilestone(companyId, milestone, isComplete) {
     ...(workflow.milestones || {}),
     [milestone]: Boolean(isComplete),
   };
-  const derivedStage = deriveStageFromMilestones(milestones, workflow.prospect_stage || company.prospect_stage);
-  const currentStage = workflow.prospect_stage || company.prospect_stage || "New Lead";
-  const nextStage =
-    workflow.manual_stage_override && getStageRank(derivedStage) <= getStageRank(currentStage)
-      ? currentStage
-      : derivedStage;
+  const currentStage = normalizeProspectStage(
+    workflow.currentStage || workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"
+  );
+  const checklistStage = getStageFromProcessChecklist(milestones);
+  const nextStage = applyStageUpdate(currentStage, checklistStage);
   const nextQuoteStatus = deriveQuoteStatusFromMilestones(milestones, workflow.quote_status || company.quote_status);
+  const now = new Date().toISOString();
+  const stageChanged = nextStage !== currentStage;
+  const communicationLogs = Array.isArray(workflow.communication_logs) ? workflow.communication_logs : [];
 
   state.prospectWorkflows[companyId] = {
     ...workflow,
     milestones,
+    currentStage: nextStage,
     prospect_stage: nextStage,
     quote_status: nextQuoteStatus,
-    manual_stage_override: Boolean(workflow.manual_stage_override) && nextStage === workflow.prospect_stage,
-    updated_at: new Date().toISOString(),
+    communication_logs: stageChanged
+      ? addSystemStageActivity(communicationLogs, nextStage, now)
+      : communicationLogs,
+    manual_stage_override: Boolean(workflow.manual_stage_override) && nextStage === currentStage,
+    stageUpdateSource: stageChanged ? "process" : workflow.stageUpdateSource || "",
+    stageUpdatedAt: stageChanged ? now : workflow.stageUpdatedAt || "",
+    lastUpdatedAt: now,
+    updated_at: now,
   };
   persistProspectWorkflows();
   applyProspectWorkflow(company);
@@ -1327,7 +1341,7 @@ function toggleMilestone(companyId, milestone, isComplete) {
   applyFilters();
 }
 
-function deriveStageFromMilestones(milestones, currentStage = "New Lead") {
+function getStageFromProcessChecklist(milestones = {}) {
   if (milestones["Advance payment received"]) {
     return "Client Onboarding";
   }
@@ -1368,7 +1382,49 @@ function deriveStageFromMilestones(milestones, currentStage = "New Lead") {
     return "Saved";
   }
 
-  return currentStage || "New Lead";
+  return "";
+}
+
+function deriveStageFromMilestones(milestones, currentStage = "New Lead") {
+  return applyStageUpdate(normalizeProspectStage(currentStage), getStageFromProcessChecklist(milestones));
+}
+
+function applyStageUpdate(currentStage, checklistStage) {
+  const normalizedCurrentStage = normalizeProspectStage(currentStage || "New Lead");
+  const normalizedChecklistStage = checklistStage ? normalizeProspectStage(checklistStage) : "";
+
+  if (!normalizedChecklistStage) {
+    return normalizedCurrentStage;
+  }
+
+  return compareStagePriority(normalizedChecklistStage, normalizedCurrentStage) > 0
+    ? normalizedChecklistStage
+    : normalizedCurrentStage;
+}
+
+function compareStagePriority(leftStage, rightStage) {
+  return getStageRank(leftStage) - getStageRank(rightStage);
+}
+
+function addSystemStageActivity(communicationLogs, nextStage, timestamp) {
+  const message = `Stage updated to ${nextStage} from process checklist`;
+  if (communicationLogs.some((entry) => entry.source === "System" && entry.message === message)) {
+    return communicationLogs;
+  }
+
+  return [
+    {
+      id: `system-stage-${Date.now()}`,
+      date: normalizeDateKey(timestamp),
+      method: "System",
+      outcome: "Stage updated",
+      notes: message,
+      message,
+      source: "System",
+      created_at: timestamp,
+    },
+    ...communicationLogs,
+  ].slice(0, 25);
 }
 
 function deriveQuoteStatusFromMilestones(milestones, currentQuoteStatus = "Not Started") {
@@ -2106,8 +2162,12 @@ function applyProspectWorkflow(company) {
   const lastCommunication = allCommunicationLogs[0] || null;
 
   Object.assign(company, {
-    prospect_stage: normalizeProspectStage(workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"),
-    stage: normalizeProspectStage(workflow.prospect_stage || company.stage || company.prospect_stage || "New Lead"),
+    prospect_stage: normalizeProspectStage(
+      workflow.currentStage || workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"
+    ),
+    stage: normalizeProspectStage(
+      workflow.currentStage || workflow.prospect_stage || company.stage || company.prospect_stage || "New Lead"
+    ),
     next_follow_up: workflow.next_follow_up || company.next_follow_up || "",
     next_action: workflow.next_action || lastCommunication?.next_action || "",
     last_contacted_at: workflow.last_contacted_at || lastCommunication?.date || "",
@@ -2120,6 +2180,12 @@ function applyProspectWorkflow(company) {
     is_saved_prospect: Boolean(findSavedProspectId(company)),
     workflow_updated_at: workflow.updated_at || "",
     manual_stage_override: Boolean(workflow.manual_stage_override),
+    currentStage: normalizeProspectStage(
+      workflow.currentStage || workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"
+    ),
+    stageUpdatedAt: workflow.stageUpdatedAt || "",
+    stageUpdateSource: workflow.stageUpdateSource || "",
+    lastUpdatedAt: workflow.lastUpdatedAt || workflow.updated_at || "",
   });
 
   return company;
@@ -2179,6 +2245,7 @@ function ensureProspectWorkflow(companyId, company) {
   }
 
   state.prospectWorkflows[companyId] = {
+    currentStage: normalizeProspectStage(company?.prospect_stage || company?.stage || "New Lead"),
     prospect_stage: company?.prospect_stage || company?.stage || "New Lead",
     communication_logs: [],
     notes: [],
@@ -2189,6 +2256,9 @@ function ensureProspectWorkflow(companyId, company) {
     follow_up_priority: company?.follow_up_priority || "Normal",
     quote_status: company?.quote_status || "Not Started",
     manual_stage_override: false,
+    stageUpdateSource: "",
+    stageUpdatedAt: "",
+    lastUpdatedAt: new Date().toISOString(),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -2208,15 +2278,20 @@ function ensureSavedProspect(company) {
   ensureProspectWorkflow(company.id, company);
   const workflow = getProspectWorkflow(company.id);
   const nextStage = !workflow.prospect_stage || workflow.prospect_stage === "New Lead" ? "Saved" : workflow.prospect_stage;
+  const now = new Date().toISOString();
   state.prospectWorkflows[company.id] = {
     ...workflow,
     milestones: {
       ...(workflow.milestones || {}),
       "Saved to prospects": true,
     },
+    currentStage: nextStage,
     prospect_stage: nextStage,
     quote_status: workflow.quote_status || "Not Started",
-    updated_at: new Date().toISOString(),
+    stageUpdateSource: workflow.stageUpdateSource || (nextStage === "Saved" ? "process" : ""),
+    stageUpdatedAt: workflow.stageUpdatedAt || (nextStage === "Saved" ? now : ""),
+    lastUpdatedAt: now,
+    updated_at: now,
   };
   persistProspectWorkflows();
 }

@@ -864,6 +864,18 @@ a {
   gap: 10px;
 }
 
+.workflow-note {
+  margin: 0;
+  border: 1px solid rgba(44, 62, 80, 0.1);
+  border-radius: 999px;
+  background: #f7f9fb;
+  color: var(--muted);
+  width: fit-content;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .workflow-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
