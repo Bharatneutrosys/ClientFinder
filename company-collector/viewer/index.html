@@ -147,7 +147,7 @@
             <strong id="verified-emails">0</strong>
           </article>
           <article class="mini-stat">
-            <span class="mini-stat-label">Client Onboarding</span>
+            <span class="mini-stat-label">Contract Expected</span>
             <strong id="high-confidence-count">0</strong>
           </article>
           <article class="mini-stat">
@@ -156,11 +156,46 @@
           </article>
         </section>
 
+        <section id="saved-workqueue-filters" class="saved-workqueue-filters hidden" aria-label="Saved prospect filters">
+          <label class="inline-field">
+            <span>Current Stage</span>
+            <select id="saved-stage-filter">
+              <option value="">All stages</option>
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Follow-Up Due</span>
+            <select id="saved-followup-filter">
+              <option value="">All follow-ups</option>
+              <option value="due_today">Due today</option>
+              <option value="overdue">Overdue</option>
+              <option value="upcoming_week">Upcoming this week</option>
+              <option value="none">Not scheduled</option>
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Quote Status</span>
+            <select id="saved-quote-filter">
+              <option value="">All quote statuses</option>
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Business Type</span>
+            <select id="saved-business-type-filter">
+              <option value="">All business types</option>
+            </select>
+          </label>
+          <label class="inline-field saved-search-field">
+            <span>Business Name</span>
+            <input id="saved-name-filter" type="search" placeholder="Search saved prospects" />
+          </label>
+        </section>
+
         <section class="followups-panel">
           <div class="followups-header">
             <div>
-              <p class="results-heading">Today's Follow-ups</p>
-              <p class="toolbar-subtle">Saved prospects with a follow-up due today or earlier.</p>
+              <p class="results-heading">Follow-ups</p>
+              <p class="toolbar-subtle">Saved prospects overdue, due today, or upcoming this week.</p>
             </div>
             <span class="result-count-chip"><strong id="today-followup-count">0</strong><span>due</span></span>
           </div>

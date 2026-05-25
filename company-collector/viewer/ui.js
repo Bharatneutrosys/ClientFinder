@@ -5,17 +5,21 @@ const PROSPECT_STAGES = [
   "Saved",
   "Outreach Started",
   "Engaged",
-  "Meeting Scheduled",
+  "Meeting Done",
+  "Requirements Discussed",
   "Quote Requested",
   "Quote Sent",
   "Negotiation",
+  "Contract Expected",
   "Contract Received",
   "Client Onboarding",
   "Lost",
   "Archived",
 ];
 
-const CONVERTIBLE_STAGES = new Set(["Contract Received"]);
+const QUOTE_STATUSES = ["Not Started", "Quote Requested", "Drafting", "Sent", "Under Review", "Accepted", "Rejected"];
+const FOLLOW_UP_PRIORITIES = ["Low", "Normal", "High"];
+const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received"]);
 const COMMUNICATION_METHODS = ["Call", "Email", "SMS", "WhatsApp", "Onsite Visit", "LinkedIn", "Other"];
 const PROCESS_MILESTONES = [
   "Saved to prospects",
@@ -218,8 +222,13 @@ export function renderDetailPanel({
   const followUpButton = container.querySelector("[data-set-follow-up]");
   if (followUpButton) {
     followUpButton.addEventListener("click", () => {
-      const input = container.querySelector("[data-follow-up-input]");
-      onSetNextFollowUp(followUpButton.getAttribute("data-set-follow-up"), input?.value || "");
+      onSetNextFollowUp(followUpButton.getAttribute("data-set-follow-up"), {
+        nextFollowUp: container.querySelector("[data-follow-up-input]")?.value || "",
+        nextAction: container.querySelector("[data-follow-up-action]")?.value || "",
+        followUpPriority: container.querySelector("[data-follow-up-priority]")?.value || "Normal",
+        lastContacted: container.querySelector("[data-last-contacted-input]")?.value || "",
+        quoteStatus: container.querySelector("[data-quote-status-input]")?.value || "",
+      });
     });
   }
 
@@ -246,8 +255,8 @@ function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanie
     <div class="prospect-list-shell">
       <div class="prospect-list-head">
         <span>${mode === "saved" ? "Saved prospect" : "Business"}</span>
-        <span>${mode === "saved" ? "Workflow" : "Fit"}</span>
-        <span>Signals</span>
+        <span>${mode === "saved" ? "Stage" : "Fit"}</span>
+        <span>${mode === "saved" ? "Work queue" : "Signals"}</span>
         <span>Actions</span>
       </div>
       <div class="prospect-list">
@@ -267,6 +276,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
   const leadScore = Number(company.lead_score || 0);
   const isSaved = isSavedProspect(company, savedCompanies);
   const reasonChips = renderReasonChips(company.reasonChips);
+  const isSavedMode = mode === "saved";
 
   return `
     <article class="prospect-row ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
@@ -276,22 +286,42 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
         <span class="row-subtitle">${escapeHtml(company.phone || "No phone")} · ${escapeHtml(formatRating(company))}</span>
       </button>
       <div class="prospect-fit">
-        <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span>
-        <span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>
-        ${mode === "saved" ? `<span class="row-subtitle">${escapeHtml(getProspectStage(company))}</span>` : ""}
+        ${
+          isSavedMode
+            ? `<span class="stage-chip">${escapeHtml(getProspectStage(company))}</span><span class="row-subtitle">${escapeHtml(company.quote_status || "Not Started")}</span>`
+            : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span><span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>`
+        }
       </div>
       <div class="prospect-signals">
-        <span>${escapeHtml(company.websiteStatus || "Unknown")}</span>
-        <span>${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
-        ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>${escapeHtml(company.bookingPlatform)}</span>` : ""}
-        ${reasonChips}
-        ${mode === "saved" ? `<span>Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>` : ""}
-        ${mode === "saved" ? `<span>Last contacted: ${escapeHtml(company.last_contacted_at || "NA")}</span>` : ""}
+        ${
+          isSavedMode
+            ? `
+              <span>Last contacted: ${escapeHtml(company.last_contacted_at || "NA")}</span>
+              <span>Next follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
+              <span>Next action: ${escapeHtml(company.next_action || "NA")}</span>
+            `
+            : `
+              <span>${escapeHtml(company.websiteStatus || "Unknown")}</span>
+              <span>${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
+              ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>${escapeHtml(company.bookingPlatform)}</span>` : ""}
+              ${reasonChips}
+            `
+        }
       </div>
       <div class="table-actions">
-        <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
-        <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">Hide</button>
-        <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">View Details</button>
+        ${
+          isSavedMode
+            ? `
+              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open</button>
+              ${company.phone ? `<a class="secondary-btn call-link" href="tel:${escapeAttribute(company.phone)}">Call</a>` : ""}
+              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">Archive</button>
+            `
+            : `
+              <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
+              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">Hide</button>
+              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">View Details</button>
+            `
+        }
       </div>
     </article>
   `;
@@ -406,14 +436,20 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         ${renderProcessCard("Last contacted", company.last_contacted_at || "NA")}
         ${renderProcessCard("Next follow-up", company.next_follow_up || "Not scheduled")}
         ${renderProcessCard("Follow-up status", followUpStatus)}
+        ${renderProcessCard("Priority", company.follow_up_priority || "Normal")}
+        ${renderProcessCard("Quote status", company.quote_status || "Not Started")}
         ${renderProcessCard("Next action", company.next_action || getSuggestedNextAction(company))}
       </div>
       <section class="workflow-card">
-        <p class="detail-section-title">Set Next Follow-up</p>
-        <div class="workflow-inline">
+        <p class="detail-section-title">Follow-up Plan</p>
+        <div class="workflow-form-grid">
           <label class="inline-field"><span>Date</span><input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-follow-up-input /></label>
-          <button class="primary-btn" type="button" data-set-follow-up="${escapeAttribute(company.id)}">Set Follow-up</button>
+          <label class="inline-field"><span>Next Action</span><input type="text" value="${escapeAttribute(company.next_action || "")}" data-follow-up-action placeholder="Call owner, send quote, confirm scope" /></label>
+          <label class="inline-field"><span>Priority</span><select data-follow-up-priority>${FOLLOW_UP_PRIORITIES.map((priority) => `<option value="${escapeAttribute(priority)}" ${priority === (company.follow_up_priority || "Normal") ? "selected" : ""}>${escapeHtml(priority)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Last Contacted</span><input type="date" value="${escapeAttribute(company.last_contacted_at || "")}" data-last-contacted-input /></label>
+          <label class="inline-field"><span>Quote Status</span><select data-quote-status-input>${QUOTE_STATUSES.map((status) => `<option value="${escapeAttribute(status)}" ${status === (company.quote_status || "Not Started") ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></label>
         </div>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-set-follow-up="${escapeAttribute(company.id)}">Save Workflow</button></div>
       </section>
       ${renderMilestoneChecklist(company)}
       ${renderConversionPlaceholder(company)}
@@ -434,7 +470,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
   if (activeTab === "quote") {
     return `
       <div class="overview-grid">
-        ${renderProcessCard("Quote status", getProspectStage(company) === "Quote Sent" ? "Quote Sent" : "Not created")}
+        ${renderProcessCard("Quote status", company.quote_status || "Not Started")}
         ${renderProcessCard("Convert to Client", CONVERTIBLE_STAGES.has(getProspectStage(company)) ? "Available" : "Requires Contract Received")}
       </div>
       ${renderConversionPlaceholder(company)}
@@ -943,6 +979,10 @@ function dedupe(values) {
 
 function getProspectStage(company) {
   const stage = String(company.prospect_stage || company.stage || "New Lead").trim();
+  if (stage === "Meeting Scheduled") {
+    return "Meeting Done";
+  }
+
   return PROSPECT_STAGES.includes(stage) ? stage : "New Lead";
 }
 
@@ -1009,7 +1049,7 @@ function renderConversionPlaceholder(company) {
     return `
       <div class="overview-card">
         <span class="overview-label">Convert to Client</span>
-        <strong>Available only after Contract Received.</strong>
+        <strong>Available only after Contract Expected or Contract Received.</strong>
       </div>
     `;
   }

@@ -401,6 +401,20 @@ a {
   gap: 8px;
 }
 
+.saved-workqueue-filters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 8px;
+  border: 1px solid var(--panel-line);
+  border-radius: 14px;
+  background: var(--panel);
+  padding: 10px;
+}
+
+.saved-search-field {
+  min-width: 190px;
+}
+
 .followups-panel {
   border-radius: var(--radius-xl);
   padding: 12px;
@@ -417,6 +431,22 @@ a {
 .today-followups {
   display: grid;
   gap: 8px;
+}
+
+.followup-group-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.followup-group-row span {
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  background: #fff;
+  padding: 5px 8px;
 }
 
 .followup-item {
@@ -613,6 +643,18 @@ a {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.stage-chip {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid rgba(44, 62, 80, 0.13);
+  border-radius: 999px;
+  background: #f7f9fb;
+  color: #2f3a45;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 5px 8px;
 }
 
 .results-container.grid-view {
@@ -1208,6 +1250,7 @@ a {
 
   .search-row,
   .stats-strip,
+  .saved-workqueue-filters,
   .overview-grid,
   .workflow-form-grid,
   .milestone-list,

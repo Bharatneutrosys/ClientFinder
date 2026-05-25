@@ -58,6 +58,24 @@ const BUSINESS_TYPE_GROUPS = {
   },
 };
 
+const PROSPECT_STAGES = [
+  "New Lead",
+  "Saved",
+  "Outreach Started",
+  "Engaged",
+  "Meeting Done",
+  "Requirements Discussed",
+  "Quote Requested",
+  "Quote Sent",
+  "Negotiation",
+  "Contract Expected",
+  "Contract Received",
+  "Client Onboarding",
+  "Lost",
+  "Archived",
+];
+const QUOTE_STATUSES = ["Not Started", "Quote Requested", "Drafting", "Sent", "Under Review", "Accepted", "Rejected"];
+
 const state = {
   companies: [],
   filteredCompanies: [],
@@ -163,6 +181,12 @@ const elements = {
   highConfidenceCount: document.querySelector("#high-confidence-count"),
   needsReview: document.querySelector("#needs-review"),
   workflowDashboard: document.querySelector("#workflow-dashboard"),
+  savedWorkqueueFilters: document.querySelector("#saved-workqueue-filters"),
+  savedStageFilter: document.querySelector("#saved-stage-filter"),
+  savedFollowupFilter: document.querySelector("#saved-followup-filter"),
+  savedQuoteFilter: document.querySelector("#saved-quote-filter"),
+  savedBusinessTypeFilter: document.querySelector("#saved-business-type-filter"),
+  savedNameFilter: document.querySelector("#saved-name-filter"),
   resultsTitle: document.querySelector("#results-title"),
   todayFollowupCount: document.querySelector("#today-followup-count"),
   todayFollowups: document.querySelector("#today-followups"),
@@ -188,6 +212,7 @@ await initialize();
 async function initialize() {
   bindEvents();
   populateBusinessTypeGroups();
+  populateSavedWorkqueueFilters();
   populateStates();
   await loadTargetCities();
   renderSavedSearches();
@@ -288,12 +313,22 @@ function bindEvents() {
     elements.verifiedOnlyFilter,
     elements.guessedEmailFilter,
     elements.linkedInFoundFilter,
+    elements.savedStageFilter,
+    elements.savedFollowupFilter,
+    elements.savedQuoteFilter,
+    elements.savedBusinessTypeFilter,
+    elements.savedNameFilter,
   ].forEach((input) => {
-    input.addEventListener("change", () => {
+    input?.addEventListener("change", () => {
       state.currentPage = 1;
       syncPresetChips();
       applyFilters();
     });
+  });
+
+  elements.savedNameFilter?.addEventListener("input", () => {
+    state.currentPage = 1;
+    applyFilters();
   });
 
   elements.industryFilter.addEventListener("change", () => {
@@ -443,6 +478,44 @@ function applyFilters() {
         return false;
       }
 
+      if (state.activeView === "saved" && filters.savedStage && company.prospect_stage !== filters.savedStage) {
+        return false;
+      }
+
+      if (
+        state.activeView === "saved" &&
+        filters.savedFollowUp &&
+        !matchesSavedFollowUpFilter(company.next_follow_up, filters.savedFollowUp)
+      ) {
+        return false;
+      }
+
+      if (
+        state.activeView === "saved" &&
+        filters.savedQuoteStatus &&
+        (company.quote_status || "Not Started") !== filters.savedQuoteStatus
+      ) {
+        return false;
+      }
+
+      if (
+        state.activeView === "saved" &&
+        filters.savedBusinessType &&
+        ![company.keyword, company.industry].includes(filters.savedBusinessType)
+      ) {
+        return false;
+      }
+
+      if (state.activeView === "saved" && filters.savedName) {
+        const savedNameHaystack = [company.name, company.phone, company.city, company.state, company.keyword, company.industry]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!savedNameHaystack.includes(filters.savedName)) {
+          return false;
+        }
+      }
+
       if (state.activeView === "discovery" && filters.state && company.state !== filters.state) {
         return false;
       }
@@ -586,6 +659,7 @@ function render() {
   elements.resultsSubtitle.textContent = buildResultsSubtitle();
   elements.resultsTitle.textContent = isSavedView ? "Saved Prospects Work Queue" : "Discovery Results";
   elements.workflowDashboard.classList.toggle("hidden", !isSavedView);
+  elements.savedWorkqueueFilters?.classList.toggle("hidden", !isSavedView);
   elements.emptyState.classList.toggle("hidden", state.filteredCompanies.length > 0 || state.loading);
   elements.resultsContainer.classList.toggle("hidden", state.filteredCompanies.length === 0);
   elements.loadingState.classList.toggle("hidden", !state.loading);
@@ -1095,6 +1169,7 @@ function updateProspectStatus(companyId, nextStatus) {
   state.prospectWorkflows[companyId] = {
     ...workflow,
     prospect_stage: nextStatus,
+    manual_stage_override: true,
     updated_at: new Date().toISOString(),
   };
   persistProspectWorkflows();
@@ -1181,18 +1256,31 @@ function addProspectNote(companyId, noteText) {
   updateSummary();
 }
 
-function setNextFollowUp(companyId, followUpDate) {
+function setNextFollowUp(companyId, followUpDetails) {
   const company = state.companies.find((item) => item.id === companyId);
-  const nextFollowUpDate = String(followUpDate || "").trim();
   if (!company) {
     return;
   }
+
+  const details =
+    followUpDetails && typeof followUpDetails === "object"
+      ? followUpDetails
+      : { nextFollowUp: followUpDetails };
+  const nextFollowUpDate = String(details.nextFollowUp || "").trim();
+  const nextAction = String(details.nextAction || "").trim();
+  const followUpPriority = String(details.followUpPriority || "Normal").trim();
+  const lastContacted = String(details.lastContacted || "").trim();
+  const quoteStatus = String(details.quoteStatus || "").trim();
 
   ensureSavedProspect(company);
   const workflow = getProspectWorkflow(companyId);
   state.prospectWorkflows[companyId] = {
     ...workflow,
     next_follow_up: nextFollowUpDate,
+    next_action: nextAction,
+    follow_up_priority: followUpPriority,
+    last_contacted_at: lastContacted,
+    quote_status: quoteStatus || workflow.quote_status || "Not Started",
     updated_at: new Date().toISOString(),
   };
   persistProspectWorkflows();
@@ -1216,12 +1304,20 @@ function toggleMilestone(companyId, milestone, isComplete) {
     ...(workflow.milestones || {}),
     [milestone]: Boolean(isComplete),
   };
-  const nextStage = deriveStageFromMilestones(milestones, workflow.prospect_stage || company.prospect_stage);
+  const derivedStage = deriveStageFromMilestones(milestones, workflow.prospect_stage || company.prospect_stage);
+  const currentStage = workflow.prospect_stage || company.prospect_stage || "New Lead";
+  const nextStage =
+    workflow.manual_stage_override && getStageRank(derivedStage) <= getStageRank(currentStage)
+      ? currentStage
+      : derivedStage;
+  const nextQuoteStatus = deriveQuoteStatusFromMilestones(milestones, workflow.quote_status || company.quote_status);
 
   state.prospectWorkflows[companyId] = {
     ...workflow,
     milestones,
     prospect_stage: nextStage,
+    quote_status: nextQuoteStatus,
+    manual_stage_override: Boolean(workflow.manual_stage_override) && nextStage === workflow.prospect_stage,
     updated_at: new Date().toISOString(),
   };
   persistProspectWorkflows();
@@ -1232,8 +1328,16 @@ function toggleMilestone(companyId, milestone, isComplete) {
 }
 
 function deriveStageFromMilestones(milestones, currentStage = "New Lead") {
+  if (milestones["Advance payment received"]) {
+    return "Client Onboarding";
+  }
+
   if (milestones["Contract received"]) {
     return "Contract Received";
+  }
+
+  if (milestones["Contract sent"]) {
+    return "Contract Expected";
   }
 
   if (milestones["Quote sent"]) {
@@ -1244,11 +1348,15 @@ function deriveStageFromMilestones(milestones, currentStage = "New Lead") {
     return "Quote Requested";
   }
 
-  if (milestones["Virtual meeting done"] || milestones["Onsite visit done"]) {
-    return "Meeting Scheduled";
+  if (milestones["Requirements discussed"]) {
+    return "Requirements Discussed";
   }
 
-  if (milestones["Client responded"] || milestones["Requirements discussed"]) {
+  if (milestones["Virtual meeting done"] || milestones["Onsite visit done"]) {
+    return "Meeting Done";
+  }
+
+  if (milestones["Client responded"]) {
     return "Engaged";
   }
 
@@ -1263,6 +1371,23 @@ function deriveStageFromMilestones(milestones, currentStage = "New Lead") {
   return currentStage || "New Lead";
 }
 
+function deriveQuoteStatusFromMilestones(milestones, currentQuoteStatus = "Not Started") {
+  if (milestones["Quote sent"]) {
+    return "Sent";
+  }
+
+  if (milestones["Quote requested"]) {
+    return currentQuoteStatus === "Sent" ? currentQuoteStatus : "Quote Requested";
+  }
+
+  return currentQuoteStatus || "Not Started";
+}
+
+function getStageRank(stage) {
+  const index = PROSPECT_STAGES.indexOf(stage);
+  return index === -1 ? 0 : index;
+}
+
 function updateSummary() {
   const savedProspects = getSavedProspectCompanies();
   const followUpsDueToday = savedProspects.filter((company) => getFollowUpState(company.next_follow_up) === "due_today");
@@ -1272,10 +1397,10 @@ function updateSummary() {
   elements.companiesScanned.textContent = String(followUpsDueToday.length);
   elements.primaryContacts.textContent = String(overdueFollowUps.length);
   elements.verifiedEmails.textContent = String(
-    savedProspects.filter((company) => company.prospect_stage === "Quote Sent").length
+    savedProspects.filter((company) => company.quote_status === "Sent" || company.prospect_stage === "Quote Sent").length
   );
   elements.highConfidenceCount.textContent = String(
-    savedProspects.filter((company) => company.prospect_stage === "Client Onboarding").length
+    savedProspects.filter((company) => company.prospect_stage === "Contract Expected").length
   );
   elements.needsReview.textContent = String(
     savedProspects.filter((company) => company.prospect_stage === "Contract Received").length
@@ -1372,8 +1497,15 @@ function renderTodayFollowups() {
     return;
   }
 
-  const dueCompanies = getSavedProspectCompanies()
+  const savedProspects = getSavedProspectCompanies();
+  const dueCompanies = savedProspects
     .filter((company) => ["due_today", "overdue"].includes(getFollowUpState(company.next_follow_up)))
+    .sort((left, right) =>
+      String(left.next_follow_up || "").localeCompare(String(right.next_follow_up || "")) ||
+      String(left.name || "").localeCompare(String(right.name || ""))
+    );
+  const upcomingCompanies = savedProspects
+    .filter((company) => isUpcomingThisWeek(company.next_follow_up))
     .sort((left, right) =>
       String(left.next_follow_up || "").localeCompare(String(right.next_follow_up || "")) ||
       String(left.name || "").localeCompare(String(right.name || ""))
@@ -1381,25 +1513,33 @@ function renderTodayFollowups() {
 
   elements.todayFollowupCount.textContent = String(dueCompanies.length);
 
-  if (!dueCompanies.length) {
+  if (!dueCompanies.length && !upcomingCompanies.length) {
     elements.todayFollowups.innerHTML = `<p class="sidebar-empty">No follow-ups due today.</p>`;
     return;
   }
 
-  elements.todayFollowups.innerHTML = dueCompanies
-    .map(
-      (company) => `
+  elements.todayFollowups.innerHTML = `
+    <div class="followup-group-row">
+      <span>Overdue: ${escapeHtml(String(dueCompanies.filter((company) => getFollowUpState(company.next_follow_up) === "overdue").length))}</span>
+      <span>Due today: ${escapeHtml(String(dueCompanies.filter((company) => getFollowUpState(company.next_follow_up) === "due_today").length))}</span>
+      <span>Upcoming this week: ${escapeHtml(String(upcomingCompanies.length))}</span>
+    </div>
+    ${[...dueCompanies, ...upcomingCompanies]
+      .slice(0, 12)
+      .map(
+        (company) => `
         <button class="followup-item" type="button" data-followup-company="${escapeAttribute(company.id)}">
           <span>
             <strong>${escapeHtml(company.name || "NA")}</strong>
-            <small>${escapeHtml(company.phone || "No phone")} - ${escapeHtml(company.prospect_stage || "New Lead")}</small>
+            <small>${escapeHtml(company.phone || "No phone")} - ${escapeHtml(company.prospect_stage || "New Lead")} - ${escapeHtml(company.follow_up_priority || "Normal")}</small>
             <small>${escapeHtml(company.next_action || "No next action set")}</small>
           </span>
           <span>${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
         </button>
       `
-    )
-    .join("");
+      )
+      .join("")}
+  `;
 
   elements.todayFollowups.querySelectorAll("[data-followup-company]").forEach((button) => {
     button.addEventListener("click", () => openDetails(button.getAttribute("data-followup-company")));
@@ -1427,6 +1567,10 @@ function exportVisibleCompaniesCsv() {
     "review_status",
     "prospect_stage",
     "next_follow_up",
+    "next_action",
+    "follow_up_priority",
+    "last_contacted_at",
+    "quote_status",
     "latest_note",
     "scan_status",
     "contacts_found",
@@ -1507,6 +1651,11 @@ function getActiveFilters() {
     verifiedOnly: elements.verifiedOnlyFilter.checked,
     guessedEmails: elements.guessedEmailFilter.checked,
     linkedInFound: elements.linkedInFoundFilter.checked,
+    savedStage: elements.savedStageFilter?.value || "",
+    savedFollowUp: elements.savedFollowupFilter?.value || "",
+    savedQuoteStatus: elements.savedQuoteFilter?.value || "",
+    savedBusinessType: elements.savedBusinessTypeFilter?.value || "",
+    savedName: String(elements.savedNameFilter?.value || "").trim().toLowerCase(),
   };
 }
 
@@ -1669,6 +1818,30 @@ function populateStates() {
   elements.stateFilter.value = DEFAULT_STATE;
 }
 
+function populateSavedWorkqueueFilters() {
+  if (elements.savedStageFilter) {
+    elements.savedStageFilter.innerHTML = [
+      `<option value="">All stages</option>`,
+      ...PROSPECT_STAGES.map((stage) => `<option value="${escapeAttribute(stage)}">${escapeHtml(stage)}</option>`),
+    ].join("");
+  }
+
+  if (elements.savedQuoteFilter) {
+    elements.savedQuoteFilter.innerHTML = [
+      `<option value="">All quote statuses</option>`,
+      ...QUOTE_STATUSES.map((status) => `<option value="${escapeAttribute(status)}">${escapeHtml(status)}</option>`),
+    ].join("");
+  }
+
+  if (elements.savedBusinessTypeFilter) {
+    const businessTypes = Object.values(BUSINESS_TYPE_GROUPS).flatMap((group) => Object.keys(group.types));
+    elements.savedBusinessTypeFilter.innerHTML = [
+      `<option value="">All business types</option>`,
+      ...businessTypes.map((type) => `<option value="${escapeAttribute(type)}">${escapeHtml(type)}</option>`),
+    ].join("");
+  }
+}
+
 async function loadTargetCities() {
   try {
     const response = await fetch("/data/target-cities.json", { cache: "no-store" });
@@ -1721,6 +1894,8 @@ function buildTestProspect(filters) {
     review_status: "new",
     prospect_stage: "New Lead",
     stage: "New Lead",
+    quote_status: "Not Started",
+    follow_up_priority: "Normal",
     contacts: [],
     contacts_found: 0,
     primary_contact: null,
@@ -1845,6 +2020,8 @@ function mapLiveProspectToCompany(prospect) {
     review_status: "new",
     prospect_stage: prospect.prospectStatus || "New Lead",
     stage: prospect.prospectStatus || "New Lead",
+    quote_status: "Not Started",
+    follow_up_priority: "Normal",
     contacts: [],
     contacts_found: 0,
     primary_contact: null,
@@ -1929,17 +2106,20 @@ function applyProspectWorkflow(company) {
   const lastCommunication = allCommunicationLogs[0] || null;
 
   Object.assign(company, {
-    prospect_stage: workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead",
-    stage: workflow.prospect_stage || company.stage || company.prospect_stage || "New Lead",
+    prospect_stage: normalizeProspectStage(workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"),
+    stage: normalizeProspectStage(workflow.prospect_stage || company.stage || company.prospect_stage || "New Lead"),
     next_follow_up: workflow.next_follow_up || company.next_follow_up || "",
     next_action: workflow.next_action || lastCommunication?.next_action || "",
     last_contacted_at: workflow.last_contacted_at || lastCommunication?.date || "",
+    follow_up_priority: workflow.follow_up_priority || company.follow_up_priority || "Normal",
+    quote_status: workflow.quote_status || company.quote_status || "Not Started",
     communication_logs: allCommunicationLogs,
     notes,
     milestones: workflow.milestones || {},
     latest_communication_note: lastCommunication?.notes || "",
     is_saved_prospect: Boolean(findSavedProspectId(company)),
     workflow_updated_at: workflow.updated_at || "",
+    manual_stage_override: Boolean(workflow.manual_stage_override),
   });
 
   return company;
@@ -1984,6 +2164,15 @@ function getProspectWorkflow(companyId) {
   return state.prospectWorkflows[companyId] || {};
 }
 
+function normalizeProspectStage(stage) {
+  const normalized = String(stage || "New Lead").trim();
+  if (normalized === "Meeting Scheduled") {
+    return "Meeting Done";
+  }
+
+  return PROSPECT_STAGES.includes(normalized) ? normalized : "New Lead";
+}
+
 function ensureProspectWorkflow(companyId, company) {
   if (!companyId || state.prospectWorkflows[companyId]) {
     return;
@@ -1996,6 +2185,10 @@ function ensureProspectWorkflow(companyId, company) {
     milestones: {},
     next_follow_up: company?.next_follow_up || "",
     next_action: company?.next_action || "",
+    last_contacted_at: company?.last_contacted_at || "",
+    follow_up_priority: company?.follow_up_priority || "Normal",
+    quote_status: company?.quote_status || "Not Started",
+    manual_stage_override: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -2022,6 +2215,7 @@ function ensureSavedProspect(company) {
       "Saved to prospects": true,
     },
     prospect_stage: nextStage,
+    quote_status: workflow.quote_status || "Not Started",
     updated_at: new Date().toISOString(),
   };
   persistProspectWorkflows();
@@ -2086,6 +2280,27 @@ function getFollowUpState(dateValue) {
   }
 
   return "upcoming";
+}
+
+function matchesSavedFollowUpFilter(dateValue, filterValue) {
+  const stateValue = getFollowUpState(dateValue);
+  if (filterValue === "upcoming_week") {
+    return isUpcomingThisWeek(dateValue);
+  }
+
+  return stateValue === filterValue;
+}
+
+function isUpcomingThisWeek(dateValue) {
+  const dateKey = normalizeDateKey(dateValue);
+  if (!dateKey) {
+    return false;
+  }
+
+  const today = new Date(`${getTodayDateKey()}T00:00:00`);
+  const target = new Date(`${dateKey}T00:00:00`);
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+  return diffDays >= 1 && diffDays <= 7;
 }
 
 function buildResultsSubtitle() {
