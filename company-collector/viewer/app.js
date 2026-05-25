@@ -16,21 +16,44 @@ const DEFAULT_BATCH_CITIES = [
   { city: "Fort Worth", state: "TX" },
 ];
 
-const INDUSTRY_QUERY_MAP = {
-  "Salon & Beauty":
-    "salon hair salon beauty salon nail salon barbershop lash studio brow studio spa med spa local beauty services",
-  "IT Services & Staffing":
-    "IT staffing staffing agency recruiting firm IT consulting technology services talent solutions workforce solutions vendor consulting company",
-  Healthcare: "healthcare medical practice clinic provider healthcare services",
-  Construction: "construction contractor building services workforce solutions",
-  Finance: "finance accounting advisory tax wealth lending services",
-  Manufacturing: "manufacturing industrial production plant operations",
-  "Retail & eCommerce": "retail ecommerce commerce fulfillment digital commerce",
-  "Real Estate": "real estate property development brokerage leasing",
-  Education: "education school university training learning services",
-  Legal: "legal law firm compliance advisory",
-  "Marketing & Advertising": "marketing advertising agency digital media branding",
-  "Other Services": "business services professional services local services",
+const BUSINESS_TYPE_GROUPS = {
+  "Salon & Beauty": {
+    query: "local beauty services",
+    tags: ["Local Beauty", "Website Prospect"],
+    types: {
+      Salon: "salon beauty salon local beauty services",
+      "Hair Salon": "hair salon beauty salon stylist local beauty services",
+      "Nail Salon": "nail salon manicure pedicure local beauty services",
+      Barbershop: "barbershop barber men's grooming local beauty services",
+      "Lash Studio": "lash studio eyelash extensions local beauty services",
+      "Brow Studio": "brow studio eyebrow threading waxing local beauty services",
+      Spa: "spa day spa facial massage local beauty services",
+      "Med Spa": "med spa medical spa aesthetics local beauty services",
+    },
+  },
+  "Home Services": {
+    query: "home services contractor local service business",
+    tags: ["Home Services", "Local Contractor"],
+    types: {
+      Construction: "construction contractor building services local contractor",
+      Plumber: "plumber plumbing contractor local home services",
+      Painter: "painter painting contractor local home services",
+      Roofing: "roofing roofer roofing contractor local home services",
+      Cleaning: "cleaning company house cleaning commercial cleaning local services",
+      Landscaping: "landscaping lawn care landscape contractor local home services",
+    },
+  },
+  "Local Services": {
+    query: "local service business",
+    tags: ["Local Services", "Main Street Business"],
+    types: {
+      Printing: "printing company print shop local business printing services",
+      "Auto Repair": "auto repair mechanic auto service local business",
+      Daycare: "daycare childcare preschool local services",
+      "Dental Clinic": "dental clinic dentist local healthcare services",
+      Restaurant: "restaurant local dining food business",
+    },
+  },
 };
 
 const state = {
@@ -154,6 +177,7 @@ await initialize();
 
 async function initialize() {
   bindEvents();
+  populateBusinessTypeGroups();
   populateStates();
   await loadTargetCities();
   renderSavedSearches();
@@ -234,7 +258,6 @@ function bindEvents() {
 
   [
     elements.globalSearch,
-    elements.industryFilter,
     elements.stateFilter,
     elements.cityFilter,
     elements.websiteConditionFilter,
@@ -256,8 +279,16 @@ function bindEvents() {
   ].forEach((input) => {
     input.addEventListener("change", () => {
       state.currentPage = 1;
+      syncPresetChips();
       applyFilters();
     });
+  });
+
+  elements.industryFilter.addEventListener("change", () => {
+    populateBusinessTypes(elements.industryFilter.value, getDefaultBusinessType(elements.industryFilter.value));
+    state.currentPage = 1;
+    syncPresetChips();
+    applyFilters();
   });
 
   elements.globalSearch.addEventListener("keydown", (event) => {
@@ -270,7 +301,7 @@ function bindEvents() {
   elements.industryNav.forEach((button) => {
     button.addEventListener("click", () => {
       const nextIndustry = button.getAttribute("data-industry-nav") || "";
-      elements.industryFilter.value = nextIndustry;
+      setBusinessTypeSelection(nextIndustry || DEFAULT_INDUSTRY, getDefaultBusinessType(nextIndustry || DEFAULT_INDUSTRY));
       syncIndustryNav();
       state.currentPage = 1;
       applyFilters();
@@ -279,8 +310,10 @@ function bindEvents() {
 
   elements.presetButtons.forEach((button) => {
     button.addEventListener("click", () => {
-      elements.globalSearch.value = button.getAttribute("data-search-preset") || "";
-      elements.presetButtons.forEach((item) => item.classList.toggle("active", item === button));
+      setBusinessTypeSelection(
+        button.getAttribute("data-business-group") || DEFAULT_INDUSTRY,
+        button.getAttribute("data-business-type") || DEFAULT_SEARCH_KEYWORD
+      );
       state.currentPage = 1;
       applyFilters();
     });
@@ -389,11 +422,7 @@ function applyFilters() {
         return false;
       }
 
-      if (filters.websiteCondition === "has_website" && !company.hasWebsite) {
-        return false;
-      }
-
-      if (filters.websiteCondition === "no_website" && company.hasWebsite) {
+      if (!matchesWebsiteCondition(company, filters.websiteCondition)) {
         return false;
       }
 
@@ -1092,8 +1121,10 @@ function renderSavedSearches() {
         return;
       }
 
-      elements.globalSearch.value = saved.filters.globalSearch;
-      elements.industryFilter.value = saved.filters.industry || "";
+      setBusinessTypeSelection(
+        saved.filters.industry || DEFAULT_INDUSTRY,
+        saved.filters.globalSearch || DEFAULT_SEARCH_KEYWORD
+      );
       elements.cityFilter.value = saved.filters.city;
       elements.stateFilter.value = saved.filters.state;
       elements.sourceFilter.value = saved.filters.source;
@@ -1258,7 +1289,43 @@ function formatWebsiteCondition(value) {
     return "Has Website = Yes";
   }
 
-  return "Any website condition";
+  if (value === "social_only") {
+    return "Social Only";
+  }
+
+  if (value === "booking_link_only") {
+    return "Booking Link Only";
+  }
+
+  if (value === "weak_website") {
+    return "Weak Website";
+  }
+
+  if (value === "broken_website") {
+    return "Broken Website";
+  }
+
+  if (value === "unknown") {
+    return "Unknown";
+  }
+
+  return "Any";
+}
+
+function matchesWebsiteCondition(company, condition) {
+  if (!condition) {
+    return true;
+  }
+
+  if (condition === "has_website") {
+    return company.hasWebsite === true;
+  }
+
+  if (condition === "no_website") {
+    return company.hasWebsite === false;
+  }
+
+  return company.websiteStatus === formatWebsiteCondition(condition);
 }
 
 function formatMobileAppCondition(value) {
@@ -1311,6 +1378,49 @@ function matchesMobileAppCondition(company, condition) {
   }
 
   return true;
+}
+
+function populateBusinessTypeGroups() {
+  elements.industryFilter.innerHTML = Object.keys(BUSINESS_TYPE_GROUPS)
+    .map((group) => `<option value="${escapeAttribute(group)}">${escapeHtml(group)}</option>`)
+    .join("");
+  setBusinessTypeSelection(DEFAULT_INDUSTRY, DEFAULT_SEARCH_KEYWORD);
+}
+
+function populateBusinessTypes(group, selectedType = "") {
+  const groupConfig = BUSINESS_TYPE_GROUPS[group] || BUSINESS_TYPE_GROUPS[DEFAULT_INDUSTRY];
+  const types = Object.keys(groupConfig.types);
+  const nextType = types.includes(selectedType) ? selectedType : types[0] || DEFAULT_SEARCH_KEYWORD;
+
+  elements.globalSearch.innerHTML = types
+    .map((type) => `<option value="${escapeAttribute(type)}">${escapeHtml(type)}</option>`)
+    .join("");
+  elements.globalSearch.value = nextType;
+}
+
+function setBusinessTypeSelection(group, type) {
+  const nextGroup = BUSINESS_TYPE_GROUPS[group] ? group : DEFAULT_INDUSTRY;
+  elements.industryFilter.value = nextGroup;
+  populateBusinessTypes(nextGroup, normalizeBusinessTypeForGroup(nextGroup, type));
+  syncPresetChips();
+}
+
+function getDefaultBusinessType(group) {
+  const groupConfig = BUSINESS_TYPE_GROUPS[group] || BUSINESS_TYPE_GROUPS[DEFAULT_INDUSTRY];
+  return Object.keys(groupConfig.types)[0] || DEFAULT_SEARCH_KEYWORD;
+}
+
+function normalizeBusinessTypeForGroup(group, type) {
+  const groupConfig = BUSINESS_TYPE_GROUPS[group] || BUSINESS_TYPE_GROUPS[DEFAULT_INDUSTRY];
+  const types = Object.keys(groupConfig.types);
+  const normalizedType = String(type || "").trim().toLowerCase();
+  const match = types.find((item) => item.toLowerCase() === normalizedType);
+
+  if (match) {
+    return match;
+  }
+
+  return getDefaultBusinessType(group);
 }
 
 function populateStates() {
@@ -1441,17 +1551,88 @@ function buildResultsSubtitle() {
 }
 
 function buildWebsiteModel(company) {
+  const explicitStatus = normalizeWebsiteStatus(company.websiteStatus || company.website_status);
+  const derivedStatus = explicitStatus || deriveWebsiteStatus(company);
   const hasWebsite =
     typeof company.hasWebsite === "boolean"
       ? company.hasWebsite
       : typeof company.has_website === "boolean"
         ? company.has_website
-        : Boolean(String(company.website || "").trim());
+        : ["Has Website = Yes", "Weak Website", "Broken Website"].includes(derivedStatus);
 
   return {
     hasWebsite,
-    websiteStatus: company.websiteStatus || company.website_status || (hasWebsite ? "Has Website = Yes" : "Has Website = No"),
+    websiteStatus: derivedStatus,
   };
+}
+
+function normalizeWebsiteStatus(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[_-]/g, " ");
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.includes("social")) {
+    return "Social Only";
+  }
+
+  if (normalized.includes("booking")) {
+    return "Booking Link Only";
+  }
+
+  if (normalized.includes("weak")) {
+    return "Weak Website";
+  }
+
+  if (normalized.includes("broken")) {
+    return "Broken Website";
+  }
+
+  if (normalized === "unknown") {
+    return "Unknown";
+  }
+
+  if (normalized.includes("yes") || normalized === "has website") {
+    return "Has Website = Yes";
+  }
+
+  if (normalized.includes("no") || normalized === "no website") {
+    return "Has Website = No";
+  }
+
+  return "";
+}
+
+function deriveWebsiteStatus(company) {
+  const website = String(company.website || "").trim();
+
+  if (!website) {
+    return "Has Website = No";
+  }
+
+  const normalizedWebsite = website.toLowerCase();
+  if (isSocialUrl(normalizedWebsite)) {
+    return "Social Only";
+  }
+
+  if (isBookingUrl(normalizedWebsite)) {
+    return "Booking Link Only";
+  }
+
+  if (String(company.scan_failure_reason || "").toLowerCase() === "blocked") {
+    return "Broken Website";
+  }
+
+  return "Has Website = Yes";
+}
+
+function isSocialUrl(value) {
+  return /(facebook\.com|instagram\.com|linktr\.ee|yelp\.com|google\.com\/maps|g\.page)/i.test(value);
+}
+
+function isBookingUrl(value) {
+  return /(vagaro\.com|booksy\.com|squareup\.com|acuityscheduling\.com|schedulicity\.com|mindbodyonline\.com|fresha\.com|glossgenius\.com|styleseat\.com|setmore\.com|calendly\.com)/i.test(value);
 }
 
 function buildMobileAppModel(company) {
@@ -1604,9 +1785,10 @@ function readBooleanish(value) {
 }
 
 function buildIndustryQuery(industry, keywordLabel) {
-  const normalizedIndustry = industry || "";
-  const industryQuery = normalizedIndustry ? INDUSTRY_QUERY_MAP[normalizedIndustry] || normalizedIndustry : "";
-  return [keywordLabel, industryQuery].filter(Boolean).join(" ").trim();
+  const groupConfig = BUSINESS_TYPE_GROUPS[industry] || BUSINESS_TYPE_GROUPS[DEFAULT_INDUSTRY];
+  const businessType = normalizeBusinessTypeForGroup(industry || DEFAULT_INDUSTRY, keywordLabel || DEFAULT_SEARCH_KEYWORD);
+  const typeQuery = groupConfig.types[businessType] || businessType;
+  return [businessType, typeQuery, groupConfig.query].filter(Boolean).join(" ").trim();
 }
 
 function buildSearchKeyword(filters) {
@@ -1656,30 +1838,19 @@ function inferCompanyIndustry(company) {
     .join(" ")
     .toLowerCase();
 
-  const match = Object.keys(INDUSTRY_QUERY_MAP).find((industry) => {
-    if (industry === "Salon & Beauty") {
-      return /(salon|barber|spa|beauty|nail|lash|brow|esthetic|med spa)/i.test(haystack);
-    }
+  const match = Object.entries(BUSINESS_TYPE_GROUPS).find(([, groupConfig]) =>
+    Object.keys(groupConfig.types).some((type) => haystack.includes(type.toLowerCase()))
+  );
 
-    if (industry === "IT Services & Staffing") {
-      return /(staffing|recruiting|talent|consulting|technology|it services|workforce)/i.test(haystack);
-    }
-
-    return haystack.includes(industry.toLowerCase().split(" ")[0]);
-  });
-
-  return match || "Other Services";
+  return match?.[0] || DEFAULT_INDUSTRY;
 }
 
 function buildIndustryTags(company) {
   const industry = inferCompanyIndustry(company);
   const tags = [industry];
+  const groupTags = BUSINESS_TYPE_GROUPS[industry]?.tags || [];
 
-  if (industry === DEFAULT_INDUSTRY) {
-    tags.push("Local Beauty", "Website Prospect");
-  }
-
-  return tags;
+  return [...new Set([...tags, ...groupTags])];
 }
 
 function compareCompanies(left, right, sortBy) {
@@ -1731,6 +1902,18 @@ function syncIndustryNav() {
     const industry = button.getAttribute("data-industry-nav") || "";
     const isActive = !industry ? selectedIndustry === "" : industry === selectedIndustry;
     button.classList.toggle("active", isActive);
+  });
+  syncPresetChips();
+}
+
+function syncPresetChips() {
+  const selectedGroup = elements.industryFilter.value || "";
+  const selectedType = elements.globalSearch.value || "";
+
+  elements.presetButtons.forEach((button) => {
+    const presetGroup = button.getAttribute("data-business-group") || "";
+    const presetType = button.getAttribute("data-business-type") || "";
+    button.classList.toggle("active", presetGroup === selectedGroup && presetType === selectedType);
   });
 }
 

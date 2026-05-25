@@ -67,25 +67,12 @@
           <div class="search-row">
             <label class="search-field search-field-wide">
               <span>Business Type</span>
-              <input id="global-search" type="search" value="Salon" placeholder="Salon, plumber, restaurant, daycare" />
+              <select id="global-search"></select>
             </label>
 
             <label class="search-field">
               <span>Business Type Group</span>
               <select id="industry-filter">
-                <option value="">Any business type</option>
-                <option value="Salon & Beauty" selected>Salon &amp; Beauty</option>
-                <option value="IT Services & Staffing">IT Services &amp; Staffing</option>
-                <option value="Healthcare">Healthcare</option>
-                <option value="Construction">Construction</option>
-                <option value="Finance">Finance</option>
-                <option value="Manufacturing">Manufacturing</option>
-                <option value="Retail & eCommerce">Retail &amp; eCommerce</option>
-                <option value="Real Estate">Real Estate</option>
-                <option value="Education">Education</option>
-                <option value="Legal">Legal</option>
-                <option value="Marketing & Advertising">Marketing &amp; Advertising</option>
-                <option value="Other Services">Other Services</option>
               </select>
             </label>
 
@@ -102,9 +89,14 @@
             <label class="search-field">
               <span>Website Condition</span>
               <select id="website-condition-filter">
-                <option value="">Any website condition</option>
+                <option value="">Any</option>
                 <option value="no_website" selected>Has Website = No</option>
                 <option value="has_website">Has Website = Yes</option>
+                <option value="social_only">Social Only</option>
+                <option value="booking_link_only">Booking Link Only</option>
+                <option value="weak_website">Weak Website</option>
+                <option value="broken_website">Broken Website</option>
+                <option value="unknown">Unknown</option>
               </select>
             </label>
 
@@ -127,16 +119,16 @@
             </div>
           </div>
           <div class="preset-row" aria-label="Quick search presets">
-            <button class="preset-chip active" type="button" data-search-preset="Salon">Salon</button>
-            <button class="preset-chip" type="button" data-search-preset="Construction company">Construction</button>
-            <button class="preset-chip" type="button" data-search-preset="Plumber">Plumber</button>
-            <button class="preset-chip" type="button" data-search-preset="Painter">Painter</button>
-            <button class="preset-chip" type="button" data-search-preset="Printing company">Printing</button>
-            <button class="preset-chip" type="button" data-search-preset="Restaurant">Restaurant</button>
-            <button class="preset-chip" type="button" data-search-preset="Cleaning company">Cleaning</button>
-            <button class="preset-chip" type="button" data-search-preset="Dental clinic">Dental clinic</button>
-            <button class="preset-chip" type="button" data-search-preset="Auto repair">Auto repair</button>
-            <button class="preset-chip" type="button" data-search-preset="Daycare">Daycare</button>
+            <button class="preset-chip active" type="button" data-business-group="Salon & Beauty" data-business-type="Salon">Salon</button>
+            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Construction">Construction</button>
+            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Plumber">Plumber</button>
+            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Painter">Painter</button>
+            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Printing">Printing</button>
+            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Restaurant">Restaurant</button>
+            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Cleaning">Cleaning</button>
+            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Dental Clinic">Dental Clinic</button>
+            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Auto Repair">Auto Repair</button>
+            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Daycare">Daycare</button>
           </div>
         </header>
 
