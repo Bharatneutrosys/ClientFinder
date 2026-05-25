@@ -19,17 +19,19 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const viewerDir = path.join(__dirname, "viewer");
 const app = express();
 const REQUESTED_PORT = Number(process.env.PORT) || 3000;
 const PORT_CANDIDATES = [REQUESTED_PORT, REQUESTED_PORT + 1, REQUESTED_PORT + 2];
+const isVercel = Boolean(process.env.VERCEL);
 
 app.use(express.json());
-app.use(express.static(__dirname));
+app.use("/viewer", express.static(viewerDir));
 
 await ensureContactsFile();
 
-app.get("/", (_request, response) => {
-  response.redirect("/viewer/");
+app.get(["/", "/viewer", "/viewer/"], (_request, response) => {
+  response.sendFile(path.join(viewerDir, "index.html"));
 });
 
 app.get("/api/companies", async (_request, response) => {
@@ -337,8 +339,12 @@ app.get("/api/exports/linkedin-decision-makers.csv", async (_request, response) 
   await sendContactsCsv(response, { linkedInDecisionMakersOnly: true });
 });
 
-if (process.env.VERCEL !== "1") {
+if (!isVercel) {
   startServer(PORT_CANDIDATES);
+}
+
+if (typeof module !== "undefined") {
+  module.exports = app;
 }
 
 export default app;
