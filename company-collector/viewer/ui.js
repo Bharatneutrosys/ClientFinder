@@ -861,6 +861,7 @@ function formatSource(value) {
     google_places: "Google",
     serp_api: "SerpAPI",
     fallback_search: "Fallback",
+    manual: "Manual",
   };
 
   return labels[value] || value || "NA";

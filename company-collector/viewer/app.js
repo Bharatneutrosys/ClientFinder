@@ -7,6 +7,7 @@ const DEFAULT_STATE = "TX";
 const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
 const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
 const PROSPECT_WORKFLOWS_KEY = "find-any-company.prospect-workflows";
+const MANUAL_PROSPECTS_KEY = "find-any-company.manual-prospects";
 const SCAN_QUEUE_KEY = "find-any-company.scan-queue";
 const DEFAULT_BATCH_CITIES = [
   { city: "Dallas", state: "TX" },
@@ -70,6 +71,7 @@ const state = {
   savedSearches: loadSavedSearches(),
   savedCompanies: loadSavedCompanies(),
   prospectWorkflows: loadProspectWorkflows(),
+  manualProspects: loadManualProspects(),
   targetCities: [],
   batchCollect: {
     running: false,
@@ -118,6 +120,8 @@ const elements = {
   searchButton: document.querySelector("#search-button"),
   collectMoreButton: document.querySelector("#collect-more-button"),
   batchCollectButton: document.querySelector("#batch-collect-button"),
+  addTestProspectButton: document.querySelector("#add-test-prospect-button"),
+  emptyAddTestProspectButton: document.querySelector("#empty-add-test-prospect-button"),
   saveSearchButton: document.querySelector("#save-search-button"),
   filtersButton: document.querySelector("#filters-button"),
   filtersMenu: document.querySelector("#filters-menu"),
@@ -191,6 +195,8 @@ function bindEvents() {
 
   elements.collectMoreButton.addEventListener("click", handleCollectMore);
   elements.batchCollectButton.addEventListener("click", handleBatchCollect);
+  elements.addTestProspectButton.addEventListener("click", addTestProspect);
+  elements.emptyAddTestProspectButton.addEventListener("click", addTestProspect);
   elements.saveSearchButton.addEventListener("click", handleSaveSearch);
   elements.filtersButton.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -345,13 +351,14 @@ async function refreshCompanies() {
     }
 
     const payload = await response.json();
-    state.companies = Array.isArray(payload.companies)
+    const loadedCompanies = Array.isArray(payload.companies)
       ? payload.companies.map((company) => ({
           ...company,
           industry: inferCompanyIndustry(company),
           industry_tags: buildIndustryTags(company),
         }))
       : [];
+    state.companies = mergeManualProspects(loadedCompanies, state.manualProspects);
 
     scanner.applySavedContacts(state.companies, flattenContacts(state.companies));
     state.companies = augmentCompaniesWithScannerData(state.companies);
@@ -362,6 +369,8 @@ async function refreshCompanies() {
 
     updateSummary();
   } catch (error) {
+    state.companies = augmentCompaniesWithScannerData(mergeManualProspects([], state.manualProspects));
+    updateSummary();
     elements.statusMessage.textContent = error.message;
   } finally {
     setLoading(false);
@@ -717,6 +726,34 @@ function handleSaveSearch() {
   persistSavedSearches();
   renderSavedSearches();
   elements.statusMessage.textContent = `Saved search for ${label}.`;
+}
+
+function addTestProspect() {
+  setBusinessTypeSelection(DEFAULT_INDUSTRY, DEFAULT_SEARCH_KEYWORD);
+  elements.cityFilter.value = "Farmers Branch";
+  elements.stateFilter.value = DEFAULT_STATE;
+  elements.websiteConditionFilter.value = "no_website";
+  elements.mobileAppConditionFilter.value = "";
+  const filters = getActiveFilters();
+  const prospect = buildTestProspect(filters);
+  const existing = findDuplicateProspect(prospect, [...state.companies, ...state.manualProspects]);
+
+  if (!existing) {
+    state.manualProspects = [prospect, ...state.manualProspects].slice(0, 100);
+    persistManualProspects();
+    state.companies = augmentCompaniesWithScannerData(
+      mergeManualProspects(state.companies, state.manualProspects)
+    );
+  }
+
+  const targetProspect = existing || prospect;
+  state.selectedCompanyId = targetProspect.id;
+  ensureProspectWorkflow(targetProspect.id, targetProspect);
+  elements.statusMessage.textContent = existing
+    ? "Test prospect already exists."
+    : "Test prospect added. Open it to test save, status, notes, and follow-ups.";
+  state.currentPage = 1;
+  applyFilters();
 }
 
 async function handleScanCompany(companyId) {
@@ -1526,6 +1563,70 @@ function getTargetCitiesForState(stateCode) {
   return state.targetCities.filter((entry) => String(entry.state || "").trim().toUpperCase() === targetState);
 }
 
+function buildTestProspect(filters) {
+  const city = filters.cityLabel || "Farmers Branch";
+  const stateCode = filters.state || DEFAULT_STATE;
+  const businessType = filters.keywordLabel || DEFAULT_SEARCH_KEYWORD;
+
+  return {
+    id: "manual-luxe-beauty-studio-farmers-branch-tx",
+    name: "Luxe Beauty Studio",
+    keyword: businessType,
+    industry: DEFAULT_INDUSTRY,
+    industry_tags: ["Salon & Beauty", "Local Beauty", "Website Prospect"],
+    city,
+    state: stateCode,
+    address: `123 Valley View Ln, ${city}, ${stateCode}`,
+    phone: "(972) 555-0148",
+    website: "",
+    websiteStatus: "Has Website = No",
+    hasWebsite: false,
+    mobileAppStatus: "Has Mobile App = No",
+    hasMobileApp: false,
+    bookingPlatform: "",
+    rating: 4.6,
+    reviews: 82,
+    source: "manual",
+    source_url: "",
+    lead_score: 92,
+    lead_label: "High Fit",
+    confidence_score: 92,
+    outreach_ready: false,
+    review_status: "new",
+    prospect_stage: "New Lead",
+    stage: "New Lead",
+    contacts: [],
+    contacts_found: 0,
+    primary_contact: null,
+    has_primary_contact: false,
+    has_email: false,
+    has_valid_email: false,
+    has_phone: true,
+    needs_review: false,
+    scan_status: SCAN_STATUS.NOT_SCANNED,
+    collected_at: new Date().toISOString(),
+    manual_prospect: true,
+  };
+}
+
+function mergeManualProspects(companies, manualProspects) {
+  const merged = [...manualProspects, ...companies];
+  return merged.reduce((deduped, company) => {
+    if (!findDuplicateProspect(company, deduped)) {
+      deduped.push(company);
+    }
+    return deduped;
+  }, []);
+}
+
+function findDuplicateProspect(prospect, candidates) {
+  const prospectKeys = getProspectIdentityKeys(prospect);
+  return candidates.find((candidate) => {
+    const candidateKeys = getProspectIdentityKeys(candidate);
+    return prospectKeys.some((key) => candidateKeys.includes(key));
+  });
+}
+
 async function collectCompaniesForLocation({ keyword, city, state: stateCode, source }) {
   const response = await fetch("/api/collect-companies", {
     method: "POST",
@@ -2214,6 +2315,15 @@ function loadProspectWorkflows() {
 
 function persistProspectWorkflows() {
   writeLocalJson(PROSPECT_WORKFLOWS_KEY, state.prospectWorkflows);
+}
+
+function loadManualProspects() {
+  const parsed = readLocalJson(MANUAL_PROSPECTS_KEY, []);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function persistManualProspects() {
+  writeLocalJson(MANUAL_PROSPECTS_KEY, state.manualProspects);
 }
 
 function readLocalJson(key, fallbackValue) {

@@ -10,7 +10,7 @@
       href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="/viewer/styles.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -116,6 +116,7 @@
               <button id="search-button" class="primary-btn" type="button">Find Prospects</button>
               <button id="collect-more-button" class="secondary-btn" type="button">Collect More</button>
               <button id="batch-collect-button" class="secondary-btn" type="button">Batch Collect</button>
+              <button id="add-test-prospect-button" class="secondary-btn" type="button">Add Test Prospect</button>
             </div>
           </div>
           <div class="preset-row" aria-label="Quick search presets">
@@ -296,7 +297,8 @@
           <div id="loading-state" class="loading-state hidden">Loading results...</div>
           <div id="empty-state" class="empty-state hidden">
             <h2>No prospects match the current search.</h2>
-            <p>Try a nearby city, another business type, or a different website condition.</p>
+            <p>No prospects found yet. Try a broader search or add a manual/test prospect.</p>
+            <button id="empty-add-test-prospect-button" class="primary-btn" type="button">Add Test Prospect</button>
           </div>
 
           <div id="results-container" class="results-container list-view"></div>
@@ -318,6 +320,6 @@
       </div>
     </div>
 
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="/viewer/app.js"></script>
   </body>
 </html>
