@@ -2,23 +2,37 @@ import { getScanStatusMeta, SCAN_STATUS } from "./scanner.js";
 
 const PROSPECT_STAGES = [
   "New Lead",
-  "Contacted",
-  "Message Sent",
-  "Call Done",
-  "Onsite Visit Done",
-  "Interested",
+  "Saved",
+  "Outreach Started",
+  "Engaged",
+  "Meeting Scheduled",
   "Quote Requested",
   "Quote Sent",
   "Negotiation",
-  "Contract Expected",
   "Contract Received",
-  "Follow Up Later",
-  "Not Interested",
+  "Client Onboarding",
   "Lost",
+  "Archived",
 ];
 
-const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received"]);
+const CONVERTIBLE_STAGES = new Set(["Contract Received"]);
 const COMMUNICATION_METHODS = ["Call", "Email", "SMS", "WhatsApp", "Onsite Visit", "LinkedIn", "Other"];
+const PROCESS_MILESTONES = [
+  "Saved to prospects",
+  "Initial intro email sent",
+  "Call attempted",
+  "WhatsApp/message sent",
+  "Onsite visit done",
+  "Virtual meeting done",
+  "Client responded",
+  "Requirements discussed",
+  "Quote requested",
+  "Quote sent",
+  "Follow-up sent",
+  "Contract sent",
+  "Contract received",
+  "Advance payment received",
+];
 
 export function renderResultsView({
   companies,
@@ -31,21 +45,16 @@ export function renderResultsView({
   onScanCompany,
   onRetryScan,
   onToggleSavedCompany,
+  onHideCompany,
+  mode = "discovery",
 }) {
   if (!companies.length) {
     container.innerHTML = "";
     return;
   }
 
-  if (viewMode === "grid") {
-    container.className = "results-container grid-view";
-    container.innerHTML = companies
-      .map((company) => renderCompanyGridCard(company, scanner.getState(company.id), selectedCompanyId, savedCompanies))
-      .join("");
-  } else {
-    container.className = "results-container list-view";
-    container.innerHTML = renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies);
-  }
+  container.className = "results-container list-view";
+  container.innerHTML = renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode);
 
   container.querySelectorAll("[data-open-details]").forEach((button) => {
     button.addEventListener("click", () => onOpenDetails(button.getAttribute("data-open-details")));
@@ -62,6 +71,10 @@ export function renderResultsView({
   container.querySelectorAll("[data-save-company]").forEach((button) => {
     button.addEventListener("click", () => onToggleSavedCompany(button.getAttribute("data-save-company")));
   });
+
+  container.querySelectorAll("[data-hide-company]").forEach((button) => {
+    button.addEventListener("click", () => onHideCompany(button.getAttribute("data-hide-company")));
+  });
 }
 
 export function renderDetailPanel({
@@ -77,6 +90,7 @@ export function renderDetailPanel({
   onAddCommunicationEntry,
   onAddProspectNote,
   onSetNextFollowUp,
+  onToggleMilestone,
   onApproveContact,
   onMarkBadContact,
   onCopyContactEmail,
@@ -97,7 +111,7 @@ export function renderDetailPanel({
   const primaryContact = company.primary_contact || null;
   const otherContacts = contacts.filter((contact) => !isSameContact(contact, primaryContact));
   const isSaved = Array.isArray(savedCompanies) && savedCompanies.includes(company.id);
-  const availableTabs = ["overview", "communication", "notes", "quote", "next_actions"];
+  const availableTabs = ["overview", "contact", "activity", "process", "notes", "quote"];
   const selectedTab = availableTabs.includes(activeTab) ? activeTab : "overview";
   const statusMeta = getScanStatusMeta(company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = company.scan_failure_reason || "";
@@ -209,6 +223,16 @@ export function renderDetailPanel({
     });
   }
 
+  container.querySelectorAll("[data-process-milestone]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () =>
+      onToggleMilestone(
+        checkbox.getAttribute("data-company-id"),
+        checkbox.getAttribute("data-process-milestone"),
+        checkbox.checked
+      )
+    );
+  });
+
   bindContactActions(container, {
     onApproveContact,
     onMarkBadContact,
@@ -217,32 +241,25 @@ export function renderDetailPanel({
   });
 }
 
-function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies) {
+function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode) {
   return `
-    <div class="table-shell">
-      <table class="results-table">
-        <thead>
-          <tr>
-            <th>Prospect</th>
-            <th>Location</th>
-            <th>Opportunity Score</th>
-            <th>Contact Details</th>
-            <th>Review</th>
-            <th>Last Scanned</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${companies
-            .map((company) => renderCompanyRow(company, scanner.getState(company.id), selectedCompanyId, savedCompanies))
-            .join("")}
-        </tbody>
-      </table>
+    <div class="prospect-list-shell">
+      <div class="prospect-list-head">
+        <span>${mode === "saved" ? "Saved prospect" : "Business"}</span>
+        <span>${mode === "saved" ? "Workflow" : "Fit"}</span>
+        <span>Signals</span>
+        <span>Actions</span>
+      </div>
+      <div class="prospect-list">
+        ${companies
+          .map((company) => renderCompanyRow(company, scanner.getState(company.id), selectedCompanyId, savedCompanies, mode))
+          .join("")}
+      </div>
     </div>
   `;
 }
 
-function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies) {
+function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies, mode) {
   const bestContact = company.primary_contact || null;
   const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = scanState.failureReason || company.scan_failure_reason || "";
@@ -251,64 +268,30 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies)
   const isSaved = isSavedProspect(company, savedCompanies);
 
   return `
-    <tr class="${company.id === selectedCompanyId ? "selected" : ""}">
-      <td>
-        <button class="row-link" type="button" data-open-details="${escapeAttribute(company.id)}">
-          <span class="row-title">${escapeHtml(company.name || "NA")}</span>
-          <span class="row-subtitle">${escapeHtml(company.website ? stripProtocol(company.website) : "NA")}</span>
-          <span class="row-subtitle">Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
-          <span class="row-subtitle">Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
-          ${company.bookingPlatform ? `<span class="row-subtitle">Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
-          <span class="row-subtitle">Status: ${escapeHtml(getProspectStage(company))}</span>
-          <span class="row-subtitle">Next Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
-          <span class="row-subtitle">${escapeHtml(company.phone || "No business phone")}</span>
-        </button>
-      </td>
-      <td>
-        <div class="cell-stack">
-          <span>${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</span>
-          <span class="row-subtitle">${escapeHtml(company.industry || company.keyword || "NA")}</span>
-          <span class="row-subtitle">${escapeHtml(formatSource(company.source))}</span>
-        </div>
-      </td>
-      <td>
-        <div class="cell-stack">
-          <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span>
-          <span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>
-          <span class="row-subtitle">${company.outreach_ready ? "Outreach ready" : "Not outreach ready"}</span>
-        </div>
-      </td>
-      <td>
-        <div class="cell-stack">
-          <span>${escapeHtml(bestContact?.name || company.phone || "NA")}</span>
-          <span class="row-subtitle">${escapeHtml(bestContact?.title || "No verified public person")}</span>
-          <span class="row-subtitle">${escapeHtml(bestContact?.email || bestContact?.phone || "No usable contact")}</span>
-          <span>${renderEmailStatusBadge(bestContact)}</span>
-        </div>
-      </td>
-      <td><span class="status-pill ${escapeAttribute(getReviewStatusClass(company.review_status))}"><span class="status-dot"></span>${escapeHtml(formatReviewStatus(company.review_status))}</span></td>
-      <td>
-        <div class="cell-stack">
-          <span>${escapeHtml(formatDate(company.last_scanned))}</span>
-          <span class="status-pill ${statusMeta.cssClass}"><span class="status-dot"></span>${escapeHtml(statusMeta.label)}</span>
-        </div>
-      </td>
-      <td>
-        <div class="table-actions">
-          <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save Prospect"}</button>
-          <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open</button>
-          <button class="secondary-btn" type="button" data-scan-company="${escapeAttribute(company.id)}">
-            ${scanState.status === SCAN_STATUS.SCANNING ? "Scanning..." : "Deep Scan"}
-          </button>
-          ${
-            failureReason
-              ? `<button class="secondary-btn" type="button" data-retry-scan="${escapeAttribute(company.id)}">Retry</button>`
-              : ""
-          }
-        </div>
-        ${failureReason ? `<span class="row-subtitle failure-note">${escapeHtml(formatFailureReason(failureReason))}</span>` : ""}
-      </td>
-    </tr>
+    <article class="prospect-row ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
+      <button class="prospect-main" type="button" data-open-details="${escapeAttribute(company.id)}">
+        <span class="row-title">${escapeHtml(company.name || "NA")}</span>
+        <span class="row-subtitle">${escapeHtml(company.industry || company.keyword || "NA")} · ${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</span>
+        <span class="row-subtitle">${escapeHtml(company.phone || "No phone")} · ${escapeHtml(formatRating(company))}</span>
+      </button>
+      <div class="prospect-fit">
+        <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span>
+        <span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>
+        ${mode === "saved" ? `<span class="row-subtitle">${escapeHtml(getProspectStage(company))}</span>` : ""}
+      </div>
+      <div class="prospect-signals">
+        <span>${escapeHtml(company.websiteStatus || "Unknown")}</span>
+        <span>${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
+        ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>${escapeHtml(company.bookingPlatform)}</span>` : ""}
+        ${mode === "saved" ? `<span>Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>` : ""}
+        ${mode === "saved" ? `<span>Last contacted: ${escapeHtml(company.last_contacted_at || "NA")}</span>` : ""}
+      </div>
+      <div class="table-actions">
+        <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
+        <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">Hide</button>
+        <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">View Details</button>
+      </div>
+    </article>
   `;
 }
 
@@ -359,58 +342,64 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
 }
 
 function renderTabContent({ company, primaryContact, otherContacts, activeTab }) {
-  if (activeTab === "communication") {
+  if (activeTab === "contact") {
     return `
-      <section class="workflow-card">
-        <p class="detail-section-title">Add Communication</p>
-        <div class="workflow-form-grid">
-          <label class="inline-field">
-            <span>Date</span>
-            <input type="date" value="${escapeAttribute(getTodayDateInput())}" data-communication-date />
-          </label>
-          <label class="inline-field">
-            <span>Method</span>
-            <select data-communication-method>
-              ${COMMUNICATION_METHODS.map((method) => `<option value="${escapeAttribute(method)}">${escapeHtml(method)}</option>`).join("")}
-            </select>
-          </label>
-          <label class="inline-field">
-            <span>Outcome/Status</span>
-            <input type="text" data-communication-outcome placeholder="Reached owner, left voicemail, replied, no answer" />
-          </label>
-          <label class="inline-field">
-            <span>Next Action</span>
-            <input type="text" data-communication-next-action placeholder="Call again, send quote, schedule visit" />
-          </label>
-          <label class="inline-field">
-            <span>Next Follow-Up Date</span>
-            <input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-communication-follow-up />
-          </label>
-        </div>
-        <textarea class="workflow-textarea" data-communication-note-input rows="4" placeholder="Notes from the communication"></textarea>
-        <div class="workflow-actions">
-          <button class="primary-btn" type="button" data-add-communication-note="${escapeAttribute(company.id)}">Add Communication</button>
-        </div>
-      </section>
-      ${renderCommunicationLog(company)}
-      ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("NA - no verified public contact person found after deep website scan.")}
+      ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("No verified public contact person found yet.")}
+      <div class="overview-grid">
+        ${renderLinkCard("Website", company.website)}
+        ${renderLinkCard("Google Profile", company.source_url)}
+        ${renderLinkCard("Booking", company.booking_url || "")}
+        ${renderLinkCard("Instagram", company.instagram_url || "")}
+        ${renderLinkCard("Facebook", company.facebook_url || "")}
+      </div>
       <div class="detail-section">
-        <p class="detail-section-title">Contact Details</p>
+        <p class="detail-section-title">Contact Records</p>
         ${
           company.contacts?.length
-            ? `
-              <div class="contact-list-wrap">
-                ${primaryContact ? `<div class="contact-list-block"><p class="contact-list-heading">Primary contact</p>${renderContactListItem(primaryContact, true)}</div>` : ""}
-                ${
-                  otherContacts.length
-                    ? `<div class="contact-list-block"><p class="contact-list-heading">Other contacts</p><div class="other-contact-list">${otherContacts.map((contact) => renderContactListItem(contact)).join("")}</div></div>`
-                    : ""
-                }
-              </div>
-            `
-            : renderNaPanel("NA - no public contacts found yet.")
+            ? `<div class="contact-list-wrap">${primaryContact ? renderContactListItem(primaryContact, true) : ""}${otherContacts.map((contact) => renderContactListItem(contact)).join("")}</div>`
+            : renderNaPanel("No public contacts found yet.")
         }
       </div>
+    `;
+  }
+
+  if (activeTab === "activity") {
+    return `
+      <section class="workflow-card">
+        <p class="detail-section-title">Add Activity</p>
+        <div class="workflow-form-grid">
+          <label class="inline-field"><span>Date</span><input type="date" value="${escapeAttribute(getTodayDateInput())}" data-communication-date /></label>
+          <label class="inline-field"><span>Method</span><select data-communication-method>${COMMUNICATION_METHODS.map((method) => `<option value="${escapeAttribute(method)}">${escapeHtml(method)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Outcome/Status</span><input type="text" data-communication-outcome placeholder="Reached owner, left voicemail, replied" /></label>
+          <label class="inline-field"><span>Next Action</span><input type="text" data-communication-next-action placeholder="Call again, send quote, schedule visit" /></label>
+          <label class="inline-field"><span>Next Follow-Up Date</span><input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-communication-follow-up /></label>
+        </div>
+        <textarea class="workflow-textarea" data-communication-note-input rows="4" placeholder="Notes from the activity"></textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-add-communication-note="${escapeAttribute(company.id)}">Add Activity</button></div>
+      </section>
+      ${renderCommunicationLog(company)}
+    `;
+  }
+
+  if (activeTab === "process") {
+    const followUpStatus = getFollowUpStatus(company.next_follow_up);
+    return `
+      <div class="overview-grid">
+        ${renderProcessCard("Current stage", getProspectStage(company))}
+        ${renderProcessCard("Last contacted", company.last_contacted_at || "NA")}
+        ${renderProcessCard("Next follow-up", company.next_follow_up || "Not scheduled")}
+        ${renderProcessCard("Follow-up status", followUpStatus)}
+        ${renderProcessCard("Next action", company.next_action || getSuggestedNextAction(company))}
+      </div>
+      <section class="workflow-card">
+        <p class="detail-section-title">Set Next Follow-up</p>
+        <div class="workflow-inline">
+          <label class="inline-field"><span>Date</span><input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-follow-up-input /></label>
+          <button class="primary-btn" type="button" data-set-follow-up="${escapeAttribute(company.id)}">Set Follow-up</button>
+        </div>
+      </section>
+      ${renderMilestoneChecklist(company)}
+      ${renderConversionPlaceholder(company)}
     `;
   }
 
@@ -419,98 +408,23 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
       <section class="workflow-card">
         <p class="detail-section-title">Add Note</p>
         <textarea class="workflow-textarea" data-prospect-note-input rows="4" placeholder="Internal note, qualification detail, pricing context, or client preference"></textarea>
-        <div class="workflow-actions">
-          <button class="primary-btn" type="button" data-add-prospect-note="${escapeAttribute(company.id)}">Add Note</button>
-        </div>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-add-prospect-note="${escapeAttribute(company.id)}">Add Note</button></div>
       </section>
       ${renderProspectNotes(company)}
-      <div class="overview-card">
-        <span class="overview-label">Private context</span>
-        <strong>${escapeHtml((company.lead_reasons || []).join(", ") || "No notes captured yet")}</strong>
-      </div>
     `;
   }
 
   if (activeTab === "quote") {
     return `
       <div class="overview-grid">
-        <div class="overview-card">
-          <span class="overview-label">Quote status</span>
-          <strong>Placeholder - no quote has been created.</strong>
-        </div>
-        <div class="overview-card">
-          <span class="overview-label">Client storage</span>
-          <strong>Credentials, documents, and payment storage are not built yet.</strong>
-        </div>
+        ${renderProcessCard("Quote status", getProspectStage(company) === "Quote Sent" ? "Quote Sent" : "Not created")}
+        ${renderProcessCard("Convert to Client", CONVERTIBLE_STAGES.has(getProspectStage(company)) ? "Available" : "Requires Contract Received")}
       </div>
       ${renderConversionPlaceholder(company)}
     `;
   }
 
-  if (activeTab === "next_actions") {
-    const followUpStatus = getFollowUpStatus(company.next_follow_up);
-    return `
-      <div class="activity-list">
-        <div class="activity-item">
-          <span class="activity-dot"></span>
-          <div>
-            <p>Current stage</p>
-            <strong>${escapeHtml(getProspectStage(company))}</strong>
-          </div>
-        </div>
-        <div class="activity-item">
-          <span class="activity-dot"></span>
-          <div>
-            <p>Next follow-up</p>
-            <strong>${escapeHtml(company.next_follow_up || "Not scheduled")}</strong>
-          </div>
-        </div>
-        <div class="activity-item">
-          <span class="activity-dot"></span>
-          <div>
-            <p>Last contacted</p>
-            <strong>${escapeHtml(company.last_contacted_at || "NA")}</strong>
-          </div>
-        </div>
-        <div class="activity-item">
-          <span class="activity-dot"></span>
-          <div>
-            <p>Follow-up status</p>
-            <strong>${escapeHtml(followUpStatus)}</strong>
-          </div>
-        </div>
-        <section class="workflow-card">
-          <p class="detail-section-title">Set Next Follow-up</p>
-          <div class="workflow-inline">
-            <label class="inline-field">
-              <span>Date</span>
-              <input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-follow-up-input />
-            </label>
-            <button class="primary-btn" type="button" data-set-follow-up="${escapeAttribute(company.id)}">Set Follow-up</button>
-          </div>
-        </section>
-        <div class="activity-item">
-          <span class="activity-dot"></span>
-          <div>
-            <p>Suggested next action</p>
-            <strong>${escapeHtml(company.next_action || getSuggestedNextAction(company))}</strong>
-          </div>
-        </div>
-        <div class="activity-item">
-          <span class="activity-dot"></span>
-          <div>
-            <p>Stage options</p>
-            <strong>${escapeHtml(PROSPECT_STAGES.join(", "))}</strong>
-          </div>
-        </div>
-        ${renderConversionPlaceholder(company)}
-      </div>
-    `;
-  }
-
-  const sourceUrls = dedupe(
-    [company.source_url, ...(company.contacts || []).map((contact) => contact.source_url)].filter(Boolean)
-  );
+  const sourceUrls = dedupe([company.source_url, ...(company.contacts || []).map((contact) => contact.source_url)].filter(Boolean));
 
   return `
     <div class="overview-grid">
@@ -729,6 +643,53 @@ function renderProspectNotes(company) {
   `;
 }
 
+function renderMilestoneChecklist(company) {
+  const milestones = company.milestones || {};
+
+  return `
+    <section class="workflow-card">
+      <p class="detail-section-title">Milestones</p>
+      <div class="milestone-list">
+        ${PROCESS_MILESTONES.map(
+          (milestone) => `
+            <label class="milestone-item">
+              <input
+                type="checkbox"
+                data-company-id="${escapeAttribute(company.id)}"
+                data-process-milestone="${escapeAttribute(milestone)}"
+                ${milestones[milestone] ? "checked" : ""}
+              />
+              <span>${escapeHtml(milestone)}</span>
+            </label>
+          `
+        ).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderProcessCard(label, value) {
+  return `
+    <div class="overview-card">
+      <span class="overview-label">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value || "NA")}</strong>
+    </div>
+  `;
+}
+
+function renderLinkCard(label, url) {
+  return `
+    <div class="overview-card">
+      <span class="overview-label">${escapeHtml(label)}</span>
+      ${
+        url
+          ? `<a class="link" href="${escapeAttribute(url)}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(url))}</a>`
+          : "<strong>NA</strong>"
+      }
+    </div>
+  `;
+}
+
 function renderContactActionButtons(contact) {
   return `
     <button
@@ -879,6 +840,17 @@ function formatFailureReason(value) {
   return labels[value] || (value ? titleCase(value) : "NA");
 }
 
+function formatRating(company) {
+  const rating = Number(company.rating || 0);
+  const reviewCount = Number(company.reviews || company.reviewCount || 0);
+
+  if (!rating && !reviewCount) {
+    return "No rating";
+  }
+
+  return `${rating ? rating.toFixed(1) : "NA"} (${reviewCount} reviews)`;
+}
+
 function formatConfidenceBadge(value) {
   const numeric = Number(value || 0);
   if (numeric >= 85) {
@@ -1019,7 +991,7 @@ function renderConversionPlaceholder(company) {
     return `
       <div class="overview-card">
         <span class="overview-label">Convert to Client</span>
-        <strong>Available only for Contract Expected or Contract Received.</strong>
+        <strong>Available only after Contract Received.</strong>
       </div>
     `;
   }
@@ -1027,7 +999,7 @@ function renderConversionPlaceholder(company) {
   return `
     <div class="overview-card">
       <span class="overview-label">Convert to Client</span>
-      <strong>Placeholder only - credential, document, and payment storage will be added later.</strong>
+      <strong>Placeholder only - onboarding, credential, document, and payment storage will be added later.</strong>
     </div>
   `;
 }

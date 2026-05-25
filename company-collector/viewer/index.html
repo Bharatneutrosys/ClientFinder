@@ -24,12 +24,9 @@
         </div>
 
         <nav class="sidebar-nav">
-          <button class="nav-item active" type="button">Dashboard</button>
-          <button class="nav-item" type="button">Prospect Search</button>
-          <button class="nav-item" type="button">Prospects</button>
-          <button class="nav-item" type="button">Contact Details</button>
-          <button class="nav-item" type="button">Scan Queue</button>
-          <button class="nav-item" type="button">Exports</button>
+          <button class="nav-item active" type="button" data-app-view="discovery">Discovery</button>
+          <button class="nav-item" type="button" data-app-view="saved">Saved Prospects</button>
+          <button class="nav-item" type="button" data-app-view="saved">Workflow Queue</button>
           <button class="nav-item" type="button">Saved Searches</button>
         </nav>
 
@@ -113,9 +110,8 @@
             </label>
 
             <div class="search-actions">
-              <button id="search-button" class="primary-btn" type="button">Find Prospects</button>
-              <button id="collect-more-button" class="secondary-btn" type="button">Collect More</button>
-              <button id="batch-collect-button" class="secondary-btn" type="button">Batch Collect</button>
+              <button id="search-button" class="primary-btn" type="button">Search</button>
+              <button id="filters-button" class="secondary-btn filters-toggle" type="button" aria-expanded="false" aria-controls="filters-menu">More Filters</button>
               <button id="add-test-prospect-button" class="secondary-btn" type="button">Add Test Prospect</button>
             </div>
           </div>
@@ -133,7 +129,7 @@
           </div>
         </header>
 
-        <section class="stats-strip">
+        <section id="workflow-dashboard" class="stats-strip workflow-dashboard hidden">
           <article class="mini-stat">
             <span class="mini-stat-label">Saved Prospects</span>
             <strong id="total-companies">0</strong>
@@ -151,7 +147,7 @@
             <strong id="verified-emails">0</strong>
           </article>
           <article class="mini-stat">
-            <span class="mini-stat-label">Contract Expected</span>
+            <span class="mini-stat-label">Client Onboarding</span>
             <strong id="high-confidence-count">0</strong>
           </article>
           <article class="mini-stat">
@@ -177,7 +173,7 @@
           <div class="results-toolbar">
             <div class="results-toolbar-left">
               <div>
-                <p class="results-heading">Local Prospects</p>
+                <p id="results-title" class="results-heading">Discovery Results</p>
                 <p id="results-subtitle" class="toolbar-subtle">Enter a location, business type, and website condition to find prospects.</p>
               </div>
             </div>
@@ -185,7 +181,6 @@
               <span class="result-count-chip"><strong id="result-count">0</strong><span>results</span></span>
               <button id="scan-visible-button" class="secondary-btn" type="button">Scan All Visible</button>
               <div class="filters-dropdown">
-                <button id="filters-button" class="secondary-btn filters-toggle" type="button" aria-expanded="false" aria-controls="filters-menu">Filters</button>
                 <div id="filters-menu" class="filters-menu hidden">
                   <div class="filters-menu-grid">
                     <label class="chip-toggle menu-chip"><input id="has-primary-filter" type="checkbox" /><span>Has contact</span></label>

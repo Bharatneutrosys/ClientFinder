@@ -212,8 +212,8 @@ a {
 }
 
 .topbar {
-  border-radius: var(--radius-xl);
-  padding: 8px 10px;
+  border-radius: 14px;
+  padding: 10px;
   display: block;
 }
 
@@ -461,8 +461,8 @@ a {
 }
 
 .results-card {
-  border-radius: var(--radius-xl);
-  padding: 10px;
+  border-radius: 14px;
+  padding: 12px;
   min-width: 0;
 }
 
@@ -510,48 +510,58 @@ a {
   margin-top: 8px;
 }
 
-.table-shell {
-  overflow-x: auto;
-  overflow-y: auto;
-  border: 1px solid #eadcca;
-  border-radius: 14px;
-  background: var(--panel);
-  max-width: 100%;
+.prospect-list-shell,
+.prospect-list {
+  display: grid;
+  gap: 8px;
 }
 
-.results-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
+.prospect-list-head,
+.prospect-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.6fr) minmax(120px, 0.7fr) minmax(220px, 1fr) minmax(230px, auto);
+  gap: 12px;
+  align-items: center;
 }
 
-.results-table th,
-.results-table td {
-  padding: 8px 10px;
-  text-align: left;
-  border-bottom: 1px solid #f0e4d3;
-  vertical-align: top;
-  font-size: 0.82rem;
-  line-height: 1.25;
-}
-
-.results-table th {
-  position: sticky;
-  top: 0;
-  background: #fbf4eb;
+.prospect-list-head {
+  padding: 0 10px;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 800;
 }
 
-.results-table tbody tr.selected {
-  background: #fff2d8;
+.prospect-row {
+  border: 1px solid var(--panel-line);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 10px;
 }
 
-.results-table tbody tr:hover {
-  background: #fff7ea;
+.prospect-row.selected,
+.prospect-row.saved {
+  border-color: rgba(199, 154, 66, 0.42);
+  background: #fff8ee;
+}
+
+.prospect-main {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  display: grid;
+  gap: 3px;
+  padding: 0;
+}
+
+.prospect-fit,
+.prospect-signals {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .row-link {
@@ -1075,12 +1085,30 @@ a {
   position: absolute;
   top: 0;
   right: 0;
-  width: min(460px, calc(100vw - 24px));
+  width: min(720px, calc(100vw - 24px));
   height: 100%;
   padding: 18px 16px;
   background: #fffaf2;
   box-shadow: -18px 0 40px rgba(43, 23, 16, 0.18);
   overflow: auto;
+}
+
+.milestone-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.milestone-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fffaf2;
+  color: var(--text);
+  font-size: 0.84rem;
 }
 
 .detail-modal-close {
@@ -1164,6 +1192,9 @@ a {
   .stats-strip,
   .overview-grid,
   .workflow-form-grid,
+  .milestone-list,
+  .prospect-list-head,
+  .prospect-row,
   .best-contact-grid {
     grid-template-columns: 1fr;
   }

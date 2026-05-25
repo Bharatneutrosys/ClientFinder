@@ -8,6 +8,7 @@ const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
 const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
 const PROSPECT_WORKFLOWS_KEY = "find-any-company.prospect-workflows";
 const MANUAL_PROSPECTS_KEY = "find-any-company.manual-prospects";
+const HIDDEN_PROSPECTS_KEY = "find-any-company.hidden-prospects";
 const SCAN_QUEUE_KEY = "find-any-company.scan-queue";
 const DEFAULT_BATCH_CITIES = [
   { city: "Dallas", state: "TX" },
@@ -64,12 +65,14 @@ const state = {
   selectedCompanyId: null,
   currentPage: 1,
   pageSize: 20,
-  viewMode: "grid",
+  viewMode: "list",
+  activeView: "discovery",
   loading: false,
   sortBy: "best_match",
   activeDetailTab: "overview",
   savedSearches: loadSavedSearches(),
   savedCompanies: loadSavedCompanies(),
+  hiddenProspects: loadHiddenProspects(),
   prospectWorkflows: loadProspectWorkflows(),
   manualProspects: loadManualProspects(),
   targetCities: [],
@@ -159,6 +162,8 @@ const elements = {
   verifiedEmails: document.querySelector("#verified-emails"),
   highConfidenceCount: document.querySelector("#high-confidence-count"),
   needsReview: document.querySelector("#needs-review"),
+  workflowDashboard: document.querySelector("#workflow-dashboard"),
+  resultsTitle: document.querySelector("#results-title"),
   todayFollowupCount: document.querySelector("#today-followup-count"),
   todayFollowups: document.querySelector("#today-followups"),
   guessedEmails: document.querySelector("#guessed-emails"),
@@ -175,6 +180,7 @@ const elements = {
   pauseQueueButton: document.querySelector("#pause-queue-button"),
   resumeQueueButton: document.querySelector("#resume-queue-button"),
   cancelQueueButton: document.querySelector("#cancel-queue-button"),
+  appViewButtons: [...document.querySelectorAll("[data-app-view]")],
 };
 
 await initialize();
@@ -193,8 +199,8 @@ async function initialize() {
 function bindEvents() {
   elements.searchButton.addEventListener("click", handleSearch);
 
-  elements.collectMoreButton.addEventListener("click", handleCollectMore);
-  elements.batchCollectButton.addEventListener("click", handleBatchCollect);
+  elements.collectMoreButton?.addEventListener("click", handleCollectMore);
+  elements.batchCollectButton?.addEventListener("click", handleBatchCollect);
   elements.addTestProspectButton.addEventListener("click", addTestProspect);
   elements.emptyAddTestProspectButton.addEventListener("click", addTestProspect);
   elements.saveSearchButton.addEventListener("click", handleSaveSearch);
@@ -220,8 +226,8 @@ function bindEvents() {
     applyFilters();
   });
 
-  elements.listViewButton.addEventListener("click", () => setViewMode("list"));
-  elements.gridViewButton.addEventListener("click", () => setViewMode("grid"));
+  elements.listViewButton?.addEventListener("click", () => setViewMode("list"));
+  elements.gridViewButton?.addEventListener("click", () => setViewMode("grid"));
   elements.scanVisibleButton.addEventListener("click", handleScanAllVisible);
   elements.pauseQueueButton.addEventListener("click", pauseScanQueue);
   elements.resumeQueueButton.addEventListener("click", resumeScanQueue);
@@ -390,7 +396,9 @@ async function handleSearch() {
 
   elements.statusMessage.textContent = `Searching ${filters.cityLabel}, ${filters.state} for ${filters.keywordLabel || DEFAULT_SEARCH_KEYWORD}...`;
   elements.searchButton.disabled = true;
-  elements.collectMoreButton.disabled = true;
+  if (elements.collectMoreButton) {
+    elements.collectMoreButton.disabled = true;
+  }
 
   try {
     const payload = await searchLiveProspects({
@@ -415,7 +423,9 @@ async function handleSearch() {
     elements.statusMessage.textContent = formatFriendlyError(error);
   } finally {
     elements.searchButton.disabled = false;
-    elements.collectMoreButton.disabled = false;
+    if (elements.collectMoreButton) {
+      elements.collectMoreButton.disabled = false;
+    }
   }
 }
 
@@ -425,27 +435,42 @@ function applyFilters() {
 
   state.filteredCompanies = state.companies
     .filter((company) => {
-      if (filters.state && company.state !== filters.state) {
+      if (state.hiddenProspects.includes(company.id)) {
         return false;
       }
 
-      if (filters.city && !String(company.city || "").toLowerCase().includes(filters.city)) {
+      if (state.activeView === "saved" && !findSavedProspectId(company)) {
         return false;
       }
 
-      if (filters.industry && company.industry !== filters.industry) {
+      if (state.activeView === "discovery" && filters.state && company.state !== filters.state) {
         return false;
       }
 
-      if (!matchesWebsiteCondition(company, filters.websiteCondition)) {
+      if (
+        state.activeView === "discovery" &&
+        filters.city &&
+        !String(company.city || "").toLowerCase().includes(filters.city)
+      ) {
         return false;
       }
 
-      if (!matchesMobileAppCondition(company, filters.mobileAppCondition)) {
+      if (state.activeView === "discovery" && filters.industry && company.industry !== filters.industry) {
         return false;
       }
 
-      if (filters.keyword) {
+      if (state.activeView === "discovery" && !matchesWebsiteCondition(company, filters.websiteCondition)) {
+        return false;
+      }
+
+      if (
+        state.activeView === "discovery" &&
+        !matchesMobileAppCondition(company, filters.mobileAppCondition)
+      ) {
+        return false;
+      }
+
+      if (state.activeView === "discovery" && filters.keyword) {
         const haystack = [
           company.name,
           company.keyword,
@@ -556,16 +581,19 @@ function paginate() {
 }
 
 function render() {
+  const isSavedView = state.activeView === "saved";
   elements.resultCount.textContent = String(state.filteredCompanies.length);
   elements.resultsSubtitle.textContent = buildResultsSubtitle();
+  elements.resultsTitle.textContent = isSavedView ? "Saved Prospects Work Queue" : "Discovery Results";
+  elements.workflowDashboard.classList.toggle("hidden", !isSavedView);
   elements.emptyState.classList.toggle("hidden", state.filteredCompanies.length > 0 || state.loading);
   elements.resultsContainer.classList.toggle("hidden", state.filteredCompanies.length === 0);
   elements.loadingState.classList.toggle("hidden", !state.loading);
   elements.pageIndicator.textContent = `Page ${state.currentPage} of ${getTotalPages()}`;
   elements.prevPageButton.disabled = state.currentPage <= 1;
   elements.nextPageButton.disabled = state.currentPage >= getTotalPages();
-  elements.listViewButton.classList.toggle("active", state.viewMode === "list");
-  elements.gridViewButton.classList.toggle("active", state.viewMode === "grid");
+  elements.listViewButton?.classList.toggle("active", state.viewMode === "list");
+  elements.gridViewButton?.classList.toggle("active", state.viewMode === "grid");
   elements.scanVisibleButton.disabled =
     state.bulkScan.running || !state.pagedCompanies.some((company) => company.website);
   elements.pauseQueueButton.disabled = !state.bulkScan.running || state.bulkScan.paused;
@@ -585,6 +613,12 @@ function render() {
     onScanCompany: handleScanCompany,
     onRetryScan: handleRetryScan,
     onToggleSavedCompany: toggleSavedCompany,
+    onHideCompany: hideCompany,
+    mode: state.activeView,
+  });
+
+  elements.appViewButtons.forEach((button) => {
+    button.classList.toggle("active", (button.getAttribute("data-app-view") || "discovery") === state.activeView);
   });
 
   renderDetail();
@@ -628,7 +662,9 @@ async function handleCollectMore() {
   }
 
   elements.statusMessage.textContent = `Collecting more prospects for ${filters.cityLabel}, ${filters.state}...`;
-  elements.collectMoreButton.disabled = true;
+  if (elements.collectMoreButton) {
+    elements.collectMoreButton.disabled = true;
+  }
 
   try {
     const payload = await collectCompaniesForLocation({
@@ -644,7 +680,9 @@ async function handleCollectMore() {
   } catch (error) {
     elements.statusMessage.textContent = error.message;
   } finally {
-    elements.collectMoreButton.disabled = false;
+    if (elements.collectMoreButton) {
+      elements.collectMoreButton.disabled = false;
+    }
   }
 }
 
@@ -671,8 +709,12 @@ async function handleBatchCollect() {
     duplicatesRemoved: 0,
   };
   renderBatchProgress();
-  elements.batchCollectButton.disabled = true;
-  elements.collectMoreButton.disabled = true;
+  if (elements.batchCollectButton) {
+    elements.batchCollectButton.disabled = true;
+  }
+  if (elements.collectMoreButton) {
+    elements.collectMoreButton.disabled = true;
+  }
 
   try {
     let previousTotalCompanies = state.companies.length;
@@ -705,8 +747,12 @@ async function handleBatchCollect() {
   } finally {
     state.batchCollect.running = false;
     state.batchCollect.currentCity = "";
-    elements.batchCollectButton.disabled = false;
-    elements.collectMoreButton.disabled = false;
+    if (elements.batchCollectButton) {
+      elements.batchCollectButton.disabled = false;
+    }
+    if (elements.collectMoreButton) {
+      elements.collectMoreButton.disabled = false;
+    }
     renderBatchProgress();
   }
 }
@@ -986,6 +1032,7 @@ function renderDetail() {
     onAddCommunicationEntry: addCommunicationEntry,
     onAddProspectNote: addProspectNote,
     onSetNextFollowUp: setNextFollowUp,
+    onToggleMilestone: toggleMilestone,
     onApproveContact: (payload) => handleReviewUpdate(payload, "approved"),
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
     onCopyContactEmail: (payload) => copyToClipboard(payload.email, "Email copied."),
@@ -1023,6 +1070,17 @@ function toggleSavedCompany(companyId) {
     applyProspectWorkflow(company);
   }
   updateSummary();
+  applyFilters();
+}
+
+function hideCompany(companyId) {
+  if (!companyId || state.hiddenProspects.includes(companyId)) {
+    return;
+  }
+
+  state.hiddenProspects = [...state.hiddenProspects, companyId];
+  persistHiddenProspects();
+  elements.statusMessage.textContent = "Prospect hidden from the current workspace.";
   applyFilters();
 }
 
@@ -1146,6 +1204,65 @@ function setNextFollowUp(companyId, followUpDate) {
   applyFilters();
 }
 
+function toggleMilestone(companyId, milestone, isComplete) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company || !milestone) {
+    return;
+  }
+
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(companyId);
+  const milestones = {
+    ...(workflow.milestones || {}),
+    [milestone]: Boolean(isComplete),
+  };
+  const nextStage = deriveStageFromMilestones(milestones, workflow.prospect_stage || company.prospect_stage);
+
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    milestones,
+    prospect_stage: nextStage,
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  elements.statusMessage.textContent = `Updated process checklist for ${company.name || "prospect"}.`;
+  updateSummary();
+  applyFilters();
+}
+
+function deriveStageFromMilestones(milestones, currentStage = "New Lead") {
+  if (milestones["Contract received"]) {
+    return "Contract Received";
+  }
+
+  if (milestones["Quote sent"]) {
+    return "Quote Sent";
+  }
+
+  if (milestones["Quote requested"]) {
+    return "Quote Requested";
+  }
+
+  if (milestones["Virtual meeting done"] || milestones["Onsite visit done"]) {
+    return "Meeting Scheduled";
+  }
+
+  if (milestones["Client responded"] || milestones["Requirements discussed"]) {
+    return "Engaged";
+  }
+
+  if (milestones["Initial intro email sent"] || milestones["Call attempted"] || milestones["WhatsApp/message sent"]) {
+    return "Outreach Started";
+  }
+
+  if (milestones["Saved to prospects"]) {
+    return "Saved";
+  }
+
+  return currentStage || "New Lead";
+}
+
 function updateSummary() {
   const savedProspects = getSavedProspectCompanies();
   const followUpsDueToday = savedProspects.filter((company) => getFollowUpState(company.next_follow_up) === "due_today");
@@ -1158,7 +1275,7 @@ function updateSummary() {
     savedProspects.filter((company) => company.prospect_stage === "Quote Sent").length
   );
   elements.highConfidenceCount.textContent = String(
-    savedProspects.filter((company) => company.prospect_stage === "Contract Expected").length
+    savedProspects.filter((company) => company.prospect_stage === "Client Onboarding").length
   );
   elements.needsReview.textContent = String(
     savedProspects.filter((company) => company.prospect_stage === "Contract Received").length
@@ -1802,6 +1919,7 @@ function applyProspectWorkflow(company) {
     last_contacted_at: workflow.last_contacted_at || lastCommunication?.date || "",
     communication_logs: allCommunicationLogs,
     notes,
+    milestones: workflow.milestones || {},
     latest_communication_note: lastCommunication?.notes || "",
     is_saved_prospect: Boolean(findSavedProspectId(company)),
     workflow_updated_at: workflow.updated_at || "",
@@ -1823,6 +1941,7 @@ function ensureProspectWorkflow(companyId, company) {
     prospect_stage: company?.prospect_stage || company?.stage || "New Lead",
     communication_logs: [],
     notes: [],
+    milestones: {},
     next_follow_up: company?.next_follow_up || "",
     next_action: company?.next_action || "",
     created_at: new Date().toISOString(),
@@ -1842,6 +1961,18 @@ function ensureSavedProspect(company) {
   }
 
   ensureProspectWorkflow(company.id, company);
+  const workflow = getProspectWorkflow(company.id);
+  const nextStage = !workflow.prospect_stage || workflow.prospect_stage === "New Lead" ? "Saved" : workflow.prospect_stage;
+  state.prospectWorkflows[company.id] = {
+    ...workflow,
+    milestones: {
+      ...(workflow.milestones || {}),
+      "Saved to prospects": true,
+    },
+    prospect_stage: nextStage,
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
 }
 
 function findSavedProspectId(company) {
@@ -1907,6 +2038,10 @@ function getFollowUpState(dateValue) {
 
 function buildResultsSubtitle() {
   const filters = getActiveFilters();
+  if (state.activeView === "saved") {
+    return `${state.filteredCompanies.length} saved prospect${state.filteredCompanies.length === 1 ? "" : "s"} sorted for follow-up and conversion work.`;
+  }
+
   const parts = [
     filters.keywordLabel || "Any business type",
     filters.cityLabel || "All cities",
@@ -2283,6 +2418,14 @@ function syncPresetChips() {
     const presetType = button.getAttribute("data-business-type") || "";
     button.classList.toggle("active", presetGroup === selectedGroup && presetType === selectedType);
   });
+
+  elements.appViewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeView = button.getAttribute("data-app-view") || "discovery";
+      state.currentPage = 1;
+      applyFilters();
+    });
+  });
 }
 
 function flattenContacts(companies) {
@@ -2411,6 +2554,16 @@ function loadManualProspects() {
 
 function persistManualProspects() {
   writeLocalJson(MANUAL_PROSPECTS_KEY, state.manualProspects);
+}
+
+function loadHiddenProspects() {
+  const parsed = readLocalJson(HIDDEN_PROSPECTS_KEY, []);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function persistHiddenProspects() {
+  state.hiddenProspects = [...new Set(state.hiddenProspects.filter(Boolean))];
+  writeLocalJson(HIDDEN_PROSPECTS_KEY, state.hiddenProspects);
 }
 
 function readLocalJson(key, fallbackValue) {
