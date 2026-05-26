@@ -158,6 +158,14 @@
 
         <section id="saved-workqueue-filters" class="saved-workqueue-filters hidden" aria-label="Saved prospect filters">
           <label class="inline-field">
+            <span>Status</span>
+            <select id="saved-status-filter">
+              <option value="">All</option>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+          <label class="inline-field">
             <span>Current Stage</span>
             <select id="saved-stage-filter">
               <option value="">All stages</option>
@@ -228,6 +236,7 @@
                     <label class="chip-toggle menu-chip"><input id="high-confidence-filter" type="checkbox" /><span>Best opportunities</span></label>
                     <label class="chip-toggle menu-chip"><input id="needs-review-filter" type="checkbox" /><span>Needs review</span></label>
                     <label class="chip-toggle menu-chip"><input id="failed-scans-filter" type="checkbox" /><span>Failed scans</span></label>
+                    <label class="chip-toggle menu-chip"><input id="show-hidden-filter" type="checkbox" /><span>Show hidden</span></label>
                   </div>
                   <label class="inline-field filters-source-field">
                     <span>Source</span>

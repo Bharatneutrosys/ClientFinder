@@ -182,6 +182,7 @@ const elements = {
   needsReview: document.querySelector("#needs-review"),
   workflowDashboard: document.querySelector("#workflow-dashboard"),
   savedWorkqueueFilters: document.querySelector("#saved-workqueue-filters"),
+  savedStatusFilter: document.querySelector("#saved-status-filter"),
   savedStageFilter: document.querySelector("#saved-stage-filter"),
   savedFollowupFilter: document.querySelector("#saved-followup-filter"),
   savedQuoteFilter: document.querySelector("#saved-quote-filter"),
@@ -194,6 +195,7 @@ const elements = {
   linkedInDecisionMakers: document.querySelector("#linkedin-decision-makers"),
   failedScans: document.querySelector("#failed-scans"),
   failedScansFilter: document.querySelector("#failed-scans-filter"),
+  showHiddenFilter: document.querySelector("#show-hidden-filter"),
   detailContent: document.querySelector("#detail-content"),
   detailModal: document.querySelector("#detail-modal"),
   closeDetailButton: document.querySelector("#close-detail-button"),
@@ -301,23 +303,25 @@ function bindEvents() {
     elements.mobileAppConditionFilter,
     elements.sourceFilter,
     elements.leadScoreFilter,
-    elements.reviewStatusFilter,
-    elements.contactTypeFilter,
-    elements.hasPrimaryFilter,
-    elements.hasWebsiteFilter,
-    elements.hasEmailFilter,
-    elements.hasPhoneFilter,
-    elements.highConfidenceFilter,
-    elements.needsReviewFilter,
-    elements.failedScansFilter,
-    elements.verifiedOnlyFilter,
-    elements.guessedEmailFilter,
-    elements.linkedInFoundFilter,
-    elements.savedStageFilter,
-    elements.savedFollowupFilter,
-    elements.savedQuoteFilter,
-    elements.savedBusinessTypeFilter,
-    elements.savedNameFilter,
+  elements.reviewStatusFilter,
+  elements.contactTypeFilter,
+  elements.hasPrimaryFilter,
+  elements.hasWebsiteFilter,
+  elements.hasEmailFilter,
+  elements.hasPhoneFilter,
+  elements.highConfidenceFilter,
+  elements.needsReviewFilter,
+  elements.failedScansFilter,
+  elements.showHiddenFilter,
+  elements.verifiedOnlyFilter,
+  elements.guessedEmailFilter,
+  elements.linkedInFoundFilter,
+  elements.savedStatusFilter,
+  elements.savedStageFilter,
+  elements.savedFollowupFilter,
+  elements.savedQuoteFilter,
+  elements.savedBusinessTypeFilter,
+  elements.savedNameFilter,
   ].forEach((input) => {
     input?.addEventListener("change", () => {
       state.currentPage = 1;
@@ -464,17 +468,241 @@ async function handleSearch() {
   }
 }
 
+function normalizeText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function normalizePhone(value) {
+  return String(value || "").replace(/\D+/g, "");
+}
+
+function getProspectDedupeKeys(company) {
+  if (!company) {
+    return [];
+  }
+
+  const placeId = normalizeText(company.placeId || company.place_id || company.id || "");
+  const name = normalizeText(company.name || company.businessName || "");
+  const address = normalizeText(company.address || "");
+  const phone = normalizePhone(company.phone || "");
+  const city = normalizeText(company.city || "");
+  const state = normalizeText(company.state || "");
+  const keys = [];
+
+  if (placeId) {
+    keys.push(`place:${placeId}`);
+    keys.push(placeId);
+  }
+
+  if (name && address) {
+    keys.push(`name-address:${name}|${address}`);
+    keys.push(`${name}|${address}`);
+  }
+
+  if (name && phone) {
+    keys.push(`name-phone:${name}|${phone}`);
+    keys.push(`${name}|${phone}`);
+  }
+
+  if (name && city && state) {
+    keys.push(`name-city-state:${name}|${city}|${state}`);
+    keys.push(`${name}|${city}|${state}`);
+  }
+
+  if (company.id) {
+    keys.push(`id:${normalizeText(company.id)}`);
+    keys.push(normalizeText(company.id));
+  }
+
+  return [...new Set(keys)];
+}
+
+function getProspectDedupeKey(company) {
+  return getProspectDedupeKeys(company)[0] || "";
+}
+
+function isDuplicateProspect(candidate, prospect) {
+  if (!candidate || !prospect) {
+    return false;
+  }
+
+  const candidateKeys = getProspectDedupeKeys(candidate);
+  const prospectKeys = getProspectDedupeKeys(prospect);
+  return candidateKeys.some((key) => prospectKeys.includes(key));
+}
+
+function getProspectCompletenessScore(company) {
+  if (!company) {
+    return 0;
+  }
+
+  let score = 0;
+  if (String(company.placeId || company.place_id || "").trim()) {
+    score += 25;
+  }
+  if (String(company.phone || "").trim()) {
+    score += 15;
+  }
+  if (String(company.websiteStatus || "").trim()) {
+    score += 10;
+  }
+  if (String(company.websiteQualityStatus || "").trim() && company.websiteQualityStatus !== "Not Checked") {
+    score += 6;
+  }
+  if (Number(company.rating || 0) > 0) {
+    score += 8;
+  }
+  if (Number(company.reviewCount || company.reviews || 0) > 0) {
+    score += 8;
+  }
+  if (String(company.address || "").trim()) {
+    score += 10;
+  }
+  if (String(company.googleProfileUrl || company.mapsUrl || company.source_url || "").trim()) {
+    score += 4;
+  }
+  if (String(company.id || "").trim()) {
+    score += 4;
+  }
+
+  return score;
+}
+
+function mergeProspectData(existing, incoming) {
+  if (!existing) {
+    return { ...incoming };
+  }
+
+  if (!incoming) {
+    return { ...existing };
+  }
+
+  const preferred = getProspectCompletenessScore(incoming) > getProspectCompletenessScore(existing) ? incoming : existing;
+  const preserveExistingFields = [
+    "communication_logs",
+    "notes",
+    "milestones",
+    "currentStage",
+    "prospect_stage",
+    "quote_status",
+    "next_follow_up",
+    "next_action",
+    "last_contacted_at",
+    "follow_up_priority",
+    "manual_priority",
+    "archived",
+    "archived_at",
+    "is_hidden",
+    "activity_log",
+  ];
+  const merged = {
+    ...existing,
+    ...incoming,
+    ...preferred,
+  };
+
+  preserveExistingFields.forEach((field) => {
+    if (existing[field] !== undefined) {
+      merged[field] = existing[field];
+    }
+  });
+
+  if (Array.isArray(existing.reasonChips) || Array.isArray(incoming.reasonChips)) {
+    merged.reasonChips = normalizeReasonChips([...(existing.reasonChips || []), ...(incoming.reasonChips || [])]);
+  }
+
+  if (Array.isArray(existing.scoreReasons) || Array.isArray(incoming.scoreReasons)) {
+    merged.scoreReasons = normalizeReasonChips([...(existing.scoreReasons || []), ...(incoming.scoreReasons || [])]);
+  }
+
+  if (Array.isArray(existing.contacts) || Array.isArray(incoming.contacts)) {
+    merged.contacts = Array.isArray(preferred.contacts)
+      ? preferred.contacts
+      : Array.isArray(existing.contacts)
+        ? existing.contacts
+        : incoming.contacts || [];
+  }
+
+  merged.id =
+    existing.archived || existing.is_saved_prospect || isSavedProspectRecord(existing)
+      ? existing.id || incoming.id
+      : incoming.id || existing.id;
+
+  return merged;
+}
+
+function isSavedProspectRecord(company) {
+  if (!company) {
+    return false;
+  }
+
+  if (Boolean(company.is_saved_prospect) || Boolean(company.archived)) {
+    return true;
+  }
+
+  return Boolean(findSavedProspectId(company));
+}
+
+function isProspectHidden(company) {
+  if (!company) {
+    return false;
+  }
+
+  if (Boolean(company.archived)) {
+    return true;
+  }
+
+  const keys = getProspectDedupeKeys(company);
+  const normalizedHidden = new Set(state.hiddenProspects.map((entry) => normalizeText(entry)));
+  return keys.some((key) => normalizedHidden.has(normalizeText(key)));
+}
+
+function dedupeProspectList(companies) {
+  const deduped = [];
+
+  (Array.isArray(companies) ? companies : []).forEach((company) => {
+    if (!company) {
+      return;
+    }
+
+    const match = deduped.find((candidate) => isDuplicateProspect(candidate, company));
+    if (!match) {
+      deduped.push({ ...company });
+      return;
+    }
+
+    const merged = mergeProspectData(match, company);
+    const index = deduped.findIndex((candidate) => candidate === match);
+    if (index >= 0) {
+      deduped[index] = merged;
+    }
+  });
+
+  return deduped;
+}
+
 function applyFilters() {
   const filters = getActiveFilters();
   syncIndustryNav();
 
   state.filteredCompanies = state.companies
     .filter((company) => {
-      if (state.hiddenProspects.includes(company.id)) {
+      if (state.activeView === "discovery" && isProspectHidden(company) && !filters.showHidden) {
         return false;
       }
 
       if (state.activeView === "saved" && !findSavedProspectId(company)) {
+        return false;
+      }
+
+      if (state.activeView === "saved" && filters.savedStatus === "active" && company.archived) {
+        return false;
+      }
+
+      if (state.activeView === "saved" && filters.savedStatus === "archived" && !company.archived) {
         return false;
       }
 
@@ -862,7 +1090,7 @@ function addTestProspect() {
   elements.mobileAppConditionFilter.value = "";
   const filters = getActiveFilters();
   const prospect = buildTestProspect(filters);
-  const existing = findDuplicateProspect(prospect, [...state.companies, ...state.manualProspects]);
+  const existing = [...state.companies, ...state.manualProspects].find((item) => isDuplicateProspect(item, prospect));
 
   if (!existing) {
     state.manualProspects = [prospect, ...state.manualProspects].slice(0, 100);
@@ -1137,6 +1365,7 @@ function toggleSavedCompany(companyId) {
   } else {
     state.savedCompanies = [...state.savedCompanies, companyId];
     ensureProspectWorkflow(companyId, company);
+    recordProspectActivity(companyId, "Saved to prospects", "User", "save");
     elements.statusMessage.textContent = "Prospect saved.";
   }
 
@@ -1149,13 +1378,68 @@ function toggleSavedCompany(companyId) {
 }
 
 function hideCompany(companyId) {
-  if (!companyId || state.hiddenProspects.includes(companyId)) {
+  if (!companyId) {
     return;
   }
 
-  state.hiddenProspects = [...state.hiddenProspects, companyId];
-  persistHiddenProspects();
-  elements.statusMessage.textContent = "Prospect hidden from the current workspace.";
+  const company = state.companies.find((item) => item.id === companyId);
+  const savedId = company ? findSavedProspectId(company) : "";
+  const workflow = company ? getProspectWorkflow(company.id) : {};
+  const hiddenKeys = getProspectDedupeKeys(company || { id: companyId });
+  const hiddenKey = hiddenKeys[0] || normalizeText(companyId);
+  const normalizedHiddenKeys = new Set(hiddenKeys.map((key) => normalizeText(key)));
+
+  if (savedId || company?.is_saved_prospect) {
+    const isArchived = Boolean(company?.archived || workflow.archived);
+    state.prospectWorkflows[company.id] = {
+      ...workflow,
+      archived: !isArchived,
+      archived_at: !isArchived ? new Date().toISOString() : "",
+      lastUpdatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    recordProspectActivity(
+      company.id,
+      !isArchived ? "Archived" : "Restored from archive",
+      "User",
+      !isArchived ? "archive" : "unarchive"
+    );
+    persistProspectWorkflows();
+    if (!isArchived) {
+      state.hiddenProspects = [...new Set([...state.hiddenProspects, hiddenKey, `id:${normalizeText(company.id)}`])];
+      persistHiddenProspects();
+      elements.statusMessage.textContent = "Prospect archived.";
+    } else {
+      state.hiddenProspects = state.hiddenProspects.filter(
+        (entry) => !normalizedHiddenKeys.has(normalizeText(entry)) && normalizeText(entry) !== normalizeText(company.id)
+      );
+      persistHiddenProspects();
+      elements.statusMessage.textContent = "Prospect restored from archive.";
+    }
+    applyProspectWorkflow(company);
+    updateSummary();
+    applyFilters();
+    return;
+  }
+
+  const isHidden = isProspectHidden(company || { id: companyId });
+  if (isHidden) {
+    state.hiddenProspects = state.hiddenProspects.filter(
+      (entry) => !normalizedHiddenKeys.has(normalizeText(entry)) && normalizeText(entry) !== normalizeText(companyId)
+    );
+    persistHiddenProspects();
+    elements.statusMessage.textContent = "Prospect restored.";
+    if (company) {
+      recordProspectActivity(company.id, "Restored from search", "User", "restore");
+    }
+  } else {
+    state.hiddenProspects = [...new Set([...state.hiddenProspects, ...hiddenKeys, `id:${normalizeText(companyId)}`])];
+    persistHiddenProspects();
+    elements.statusMessage.textContent = "Prospect hidden from the current workspace.";
+    if (company) {
+      recordProspectActivity(company.id, "Hidden from search", "User", "hide");
+    }
+  }
   applyFilters();
 }
 
@@ -1779,9 +2063,11 @@ function getActiveFilters() {
     highConfidence: elements.highConfidenceFilter.checked,
     needsReview: elements.needsReviewFilter.checked,
     failedScans: elements.failedScansFilter.checked,
+    showHidden: elements.showHiddenFilter?.checked || false,
     verifiedOnly: elements.verifiedOnlyFilter.checked,
     guessedEmails: elements.guessedEmailFilter.checked,
     linkedInFound: elements.linkedInFoundFilter.checked,
+    savedStatus: elements.savedStatusFilter?.value || "",
     savedStage: elements.savedStageFilter?.value || "",
     savedFollowUp: elements.savedFollowupFilter?.value || "",
     savedQuoteStatus: elements.savedQuoteFilter?.value || "",
@@ -2052,21 +2338,7 @@ function buildTestProspect(filters) {
 }
 
 function mergeManualProspects(companies, manualProspects) {
-  const merged = [...manualProspects, ...companies];
-  return merged.reduce((deduped, company) => {
-    if (!findDuplicateProspect(company, deduped)) {
-      deduped.push(company);
-    }
-    return deduped;
-  }, []);
-}
-
-function findDuplicateProspect(prospect, candidates) {
-  const prospectKeys = getProspectIdentityKeys(prospect);
-  return candidates.find((candidate) => {
-    const candidateKeys = getProspectIdentityKeys(candidate);
-    return prospectKeys.some((key) => candidateKeys.includes(key));
-  });
+  return dedupeProspectList([...(Array.isArray(manualProspects) ? manualProspects : []), ...(Array.isArray(companies) ? companies : [])]);
 }
 
 function makeStableManualId(name, address) {
@@ -2284,10 +2556,13 @@ function applyProspectWorkflow(company) {
     websiteCheckStatus: workflow.websiteCheckStatus || company.websiteCheckStatus || "Not Checked",
     websiteCheckedAt: workflow.websiteCheckedAt || company.websiteCheckedAt || "",
     communication_logs: allCommunicationLogs,
+    activity_log: Array.isArray(workflow.activity_log) ? workflow.activity_log : Array.isArray(company.activity_log) ? company.activity_log : [],
     notes,
     milestones: workflow.milestones || {},
     latest_communication_note: lastCommunication?.notes || "",
     is_saved_prospect: Boolean(findSavedProspectId(company)),
+    archived: Boolean(workflow.archived || company.archived),
+    archived_at: workflow.archived_at || company.archived_at || "",
     workflow_updated_at: workflow.updated_at || "",
     manual_stage_override: Boolean(workflow.manual_stage_override),
     currentStage: normalizeProspectStage(
@@ -2305,6 +2580,9 @@ function applyProspectWorkflow(company) {
   company.lead_label = company.opportunityPriority;
   company.scoreReasons = getScoreReasons(company, company.opportunityScore);
   company.reasonChips = normalizeReasonChips(company.scoreReasons.length ? company.scoreReasons : company.reasonChips);
+  company.archived = Boolean(workflow.archived || company.archived);
+  company.archived_at = workflow.archived_at || company.archived_at || "";
+  company.is_hidden = isProspectHidden(company);
 
   return company;
 }
@@ -2530,11 +2808,55 @@ function ensureProspectWorkflow(companyId, company) {
     websiteQualityReasons: Array.isArray(company?.websiteQualityReasons) ? company.websiteQualityReasons : [],
     websiteCheckStatus: company?.websiteCheckStatus || "Not Checked",
     websiteCheckedAt: company?.websiteCheckedAt || "",
+    archived: Boolean(company?.archived),
+    archived_at: company?.archived_at || "",
+    activity_log: Array.isArray(company?.activity_log) ? company.activity_log : [],
     manual_stage_override: false,
     stageUpdateSource: "",
     stageUpdatedAt: "",
     lastUpdatedAt: new Date().toISOString(),
     created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+}
+
+function appendWorkflowActivity(existingEntries, entry) {
+  const entries = Array.isArray(existingEntries) ? existingEntries : [];
+  const nextEntry = {
+    id: `activity-${Date.now()}`,
+    created_at: new Date().toISOString(),
+    source: entry?.source || "User",
+    action: entry?.action || "update",
+    message: entry?.message || "Updated",
+  };
+
+  const latest = entries[0];
+  if (
+    latest &&
+    String(latest.action || "") === nextEntry.action &&
+    String(latest.message || "") === nextEntry.message &&
+    String(latest.source || "") === nextEntry.source
+  ) {
+    return entries;
+  }
+
+  return [nextEntry, ...entries].slice(0, 50);
+}
+
+function recordProspectActivity(companyId, message, source = "User", action = "update") {
+  if (!companyId) {
+    return;
+  }
+
+  ensureProspectWorkflow(companyId, state.companies.find((item) => item.id === companyId));
+  const workflow = getProspectWorkflow(companyId);
+  const activity_log = appendWorkflowActivity(workflow.activity_log, { message, source, action });
+
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    activity_log,
+    lastUpdatedAt: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
   persistProspectWorkflows();
@@ -2576,7 +2898,7 @@ function findSavedProspectId(company) {
     return "";
   }
 
-  const companyKeys = getProspectIdentityKeys(company);
+  const companyKeys = getProspectDedupeKeys(company);
   return (
     state.savedCompanies.find((savedId) => {
       if (savedId === company.id) {
@@ -2588,29 +2910,15 @@ function findSavedProspectId(company) {
         return false;
       }
 
-      const savedKeys = getProspectIdentityKeys(savedCompany);
+      const savedKeys = getProspectDedupeKeys(savedCompany);
       return companyKeys.some((key) => savedKeys.includes(key));
     }) || ""
   );
 }
 
-function getProspectIdentityKeys(company) {
-  const keys = [
-    company.id,
-    company.website,
-    company.phone,
-    [company.name, company.address].filter(Boolean).join("|"),
-    [company.name, company.city, company.state].filter(Boolean).join("|"),
-  ];
-
-  return keys
-    .map((value) => String(value || "").trim().toLowerCase())
-    .filter(Boolean);
-}
-
 function getSavedProspectCompanies() {
   return state.companies
-    .filter((company) => Boolean(findSavedProspectId(company)))
+    .filter((company) => Boolean(findSavedProspectId(company)) && !company.archived)
     .map((company) => applyProspectWorkflow(company));
 }
 
@@ -3374,7 +3682,7 @@ function persistSavedSearches() {
 
 function loadSavedCompanies() {
   const parsed = readLocalJson(SAVED_COMPANIES_KEY, []);
-  return Array.isArray(parsed) ? parsed : [];
+  return Array.isArray(parsed) ? [...new Set(parsed.map((value) => String(value || "").trim()).filter(Boolean))] : [];
 }
 
 function persistSavedCompanies() {
@@ -3402,11 +3710,13 @@ function persistManualProspects() {
 
 function loadHiddenProspects() {
   const parsed = readLocalJson(HIDDEN_PROSPECTS_KEY, []);
-  return Array.isArray(parsed) ? parsed : [];
+  return Array.isArray(parsed)
+    ? [...new Set(parsed.map((value) => normalizeText(value)).filter(Boolean))]
+    : [];
 }
 
 function persistHiddenProspects() {
-  state.hiddenProspects = [...new Set(state.hiddenProspects.filter(Boolean))];
+  state.hiddenProspects = [...new Set(state.hiddenProspects.map((value) => normalizeText(value)).filter(Boolean))];
   writeLocalJson(HIDDEN_PROSPECTS_KEY, state.hiddenProspects);
 }
 

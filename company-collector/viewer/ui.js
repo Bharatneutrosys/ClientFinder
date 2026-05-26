@@ -139,6 +139,8 @@ export function renderDetailPanel({
       <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")}</span>
       <span class="detail-tag">${escapeHtml(String(company.lead_score || 0))}/100 opportunity score</span>
       <span class="detail-tag">${escapeHtml(prospectStage)}</span>
+      ${company.archived ? `<span class="detail-tag">Archived</span>` : ""}
+      ${company.is_hidden && !company.archived ? `<span class="detail-tag">Hidden</span>` : ""}
       ${company.outreach_ready ? `<span class="detail-tag">Outreach ready</span>` : ""}
       ${(company.industry_tags || [company.industry || "NA"])
         .map((tag) => `<span class="detail-tag">${escapeHtml(tag)}</span>`)
@@ -288,6 +290,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
   const isSaved = isSavedProspect(company, savedCompanies);
   const reasonChips = renderReasonChips(company.reasonChips);
   const isSavedMode = mode === "saved";
+  const isHidden = Boolean(company.is_hidden || company.archived);
 
   return `
     <article class="prospect-row ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
@@ -302,6 +305,8 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
             ? `<span class="stage-chip">${escapeHtml(getProspectStage(company))}</span><span class="row-subtitle">${escapeHtml(company.quote_status || "Not Started")}</span>`
             : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")}</span><span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>`
         }
+        ${isHidden && !isSavedMode ? `<span class="stage-chip">Hidden</span>` : ""}
+        ${company.archived && isSavedMode ? `<span class="stage-chip">Archived</span>` : ""}
       </div>
       <div class="prospect-signals">
         ${
@@ -335,11 +340,11 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
             ? `
               <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open</button>
               ${company.phone ? `<a class="secondary-btn call-link" href="tel:${escapeAttribute(company.phone)}">Call</a>` : ""}
-              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">Archive</button>
+              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">${company.archived ? "Unarchive" : "Archive"}</button>
             `
             : `
               <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
-              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">Hide</button>
+              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">${isHidden ? "Restore" : "Hide"}</button>
               <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">View Details</button>
             `
         }
@@ -369,6 +374,7 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
   const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = scanState.failureReason || company.scan_failure_reason || "";
   const isSaved = isSavedProspect(company, savedCompanies);
+  const isHidden = Boolean(company.is_hidden || company.archived);
 
   return `
     <article class="company-grid-card ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
@@ -386,6 +392,7 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
           Number(company.websiteQualityScore || 0) > 0 ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)` : ""
         }</span>
         <span>Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
+        ${isHidden ? `<span>Hidden</span>` : ""}
         ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
         ${company.socialPlatform && company.socialPlatform !== "Unknown" ? `<span>Social Platform: ${escapeHtml(company.socialPlatform)}</span>` : ""}
         <span>Status: ${escapeHtml(getProspectStage(company))}</span>
@@ -398,6 +405,7 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
       <div class="table-actions">
         <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
         <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open Details</button>
+        <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">${isHidden ? "Restore" : "Hide"}</button>
         <button class="secondary-btn" type="button" data-scan-company="${escapeAttribute(company.id)}">
           ${scanState.status === SCAN_STATUS.SCANNING ? "Scanning..." : "Deep Scan"}
         </button>
@@ -450,6 +458,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         <div class="workflow-actions"><button class="primary-btn" type="button" data-add-communication-note="${escapeAttribute(company.id)}">Add Activity</button></div>
       </section>
       ${renderCommunicationLog(company)}
+      ${renderWorkflowActivityLog(company)}
     `;
   }
 
@@ -707,6 +716,35 @@ function renderCommunicationLog(company) {
                   <p>${escapeHtml(entry.date || formatDate(entry.created_at))} - ${escapeHtml(entry.method || "Other")} - ${escapeHtml(entry.outcome || "No outcome")}</p>
                   <strong>${escapeHtml(entry.notes || "NA")}</strong>
                   <p>Next: ${escapeHtml(entry.next_action || "NA")}${entry.next_follow_up ? ` on ${escapeHtml(entry.next_follow_up)}` : ""}</p>
+                </div>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderWorkflowActivityLog(company) {
+  const entries = Array.isArray(company.activity_log) ? company.activity_log : [];
+
+  if (!entries.length) {
+    return "";
+  }
+
+  return `
+    <section class="workflow-card">
+      <p class="detail-section-title">System Activity</p>
+      <div class="activity-list">
+        ${entries
+          .map(
+            (entry) => `
+              <div class="activity-item">
+                <span class="activity-dot"></span>
+                <div>
+                  <p>${escapeHtml(formatDate(entry.created_at))} - ${escapeHtml(entry.source || "User")}</p>
+                  <strong>${escapeHtml(entry.message || "Updated")}</strong>
                 </div>
               </div>
             `
@@ -1113,7 +1151,33 @@ function isSavedProspect(company, savedCompanies) {
     return false;
   }
 
-  return Boolean(company.is_saved_prospect) || (Array.isArray(savedCompanies) && savedCompanies.includes(company.id));
+  if (Boolean(company.is_saved_prospect)) {
+    return true;
+  }
+
+  const companyKeys = getProspectSavedKeys(company);
+  return Array.isArray(savedCompanies) && savedCompanies.some((savedId) => companyKeys.includes(normalizeSavedKey(savedId)));
+}
+
+function getProspectSavedKeys(company) {
+  const keys = [
+    company?.id,
+    company?.placeId,
+    company?.place_id,
+    company?.website,
+    company?.phone,
+    [company?.name, company?.address].filter(Boolean).join("|"),
+    [company?.name, company?.city, company?.state].filter(Boolean).join("|"),
+  ];
+
+  return [...new Set(keys.map((value) => normalizeSavedKey(value)).filter(Boolean))];
+}
+
+function normalizeSavedKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 function renderConversionPlaceholder(company) {
