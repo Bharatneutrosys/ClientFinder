@@ -239,13 +239,14 @@
                     </select>
                   </label>
                   <label class="inline-field filters-source-field">
-                    <span>Opportunity score</span>
+                    <span>Priority</span>
                     <select id="lead-score-filter">
-                      <option value="">All opportunity scores</option>
-                      <option value="High Fit">High Fit</option>
-                      <option value="Medium Fit">Medium Fit</option>
-                      <option value="Low Fit">Low Fit</option>
+                      <option value="">Any priority</option>
+                      <option value="Best Prospect">Best Prospect</option>
+                      <option value="Strong Prospect">Strong Prospect</option>
                       <option value="Needs Review">Needs Review</option>
+                      <option value="Low Priority">Low Priority</option>
+                      <option value="Not Recommended">Not Recommended</option>
                     </select>
                   </label>
                   <label class="inline-field filters-source-field">
@@ -294,9 +295,10 @@
               </div>
               <label class="inline-field inline-select">
                 <select id="sort-by-select" aria-label="Sort results">
-                  <option value="best_match">Best match</option>
-                  <option value="confidence">Confidence</option>
-                  <option value="recent">Recent</option>
+                  <option value="best_match" selected>Best match</option>
+                  <option value="score">Highest score</option>
+                  <option value="reviews">Most reviews</option>
+                  <option value="rating">Highest rating</option>
                   <option value="name">Name</option>
                 </select>
               </label>

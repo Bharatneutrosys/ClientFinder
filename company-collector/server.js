@@ -818,6 +818,7 @@ function mapGooglePlaceToProspect(place, { businessType, city, state }) {
     rating,
     reviewCount,
     phone: place?.nationalPhoneNumber,
+    address: place?.formattedAddress,
     businessName,
   });
   const reasonChips = buildProspectReasonChips({
@@ -825,7 +826,11 @@ function mapGooglePlaceToProspect(place, { businessType, city, state }) {
     rating,
     reviewCount,
     phone: place?.nationalPhoneNumber,
+    address: place?.formattedAddress,
+    bookingPlatform: websiteModel.bookingPlatform,
+    socialPlatform: websiteModel.socialPlatform,
     opportunityScore,
+    businessName,
   });
 
   return {
@@ -845,6 +850,8 @@ function mapGooglePlaceToProspect(place, { businessType, city, state }) {
     mapsUrl: place?.googleMapsUri || "",
     source: "Google Places",
     opportunityScore,
+    opportunityPriority: getOpportunityPriority(opportunityScore),
+    scoreReasons: reasonChips,
     reasonChips,
     prospectStatus: "New Lead",
     mobileAppStatus: "Unknown",
@@ -889,54 +896,6 @@ function matchesWebsiteCondition(prospect, websiteCondition) {
   }
 
   return true;
-}
-
-function scoreGoogleProspect({ websiteStatus, rating, reviewCount, phone, businessName }) {
-  let score = 50;
-
-  if (websiteStatus === "No Website") {
-    score += 30;
-  } else if (websiteStatus === "Social Only") {
-    score += 28;
-  } else if (websiteStatus === "Booking Link Only") {
-    score += 24;
-  } else if (websiteStatus === "Has Website") {
-    score -= 10;
-  } else if (websiteStatus === "Weak Website") {
-    score += 8;
-  } else if (websiteStatus === "Broken Website") {
-    score += 6;
-  } else if (websiteStatus === "Unknown") {
-    score += 4;
-  }
-
-  if (rating >= 4.5) {
-    score += 10;
-  } else if (rating >= 4) {
-    score += 5;
-  } else if (rating > 0 && rating < 3.8) {
-    score -= 12;
-  }
-
-  if (reviewCount >= 75) {
-    score += 10;
-  } else if (reviewCount >= 25) {
-    score += 6;
-  } else if (reviewCount > 0 && reviewCount < 5) {
-    score -= 8;
-  }
-
-  if (String(phone || "").trim()) {
-    score += 8;
-  } else {
-    score -= 10;
-  }
-
-  if (isLikelyChainBusiness(businessName)) {
-    score -= 15;
-  }
-
-  return Math.max(0, Math.min(100, score));
 }
 
 function classifyWebsiteStatus(websiteUrl, { businessName = "", scanFailureReason = "" } = {}) {
@@ -1097,43 +1056,147 @@ function looksLikeOwnedWebsite(value, businessName) {
 }
 
 function isLikelyChainBusiness(name) {
-  return /(great clips|supercuts|sport clips|fantastic sams|smartstyle|ulta|sephora|regis|cost cutters|jcpenney|walmart|target|costco)/i.test(
+  return /(\bgreat clips\b|\bsupercuts\b|\bsport clips\b|\bfantastic sams\b|\bmassage envy\b|\beuropean wax center\b|\bthe lash lounge\b|\bamazing lash studio\b|\bhand & stone\b|\bpalm beach tan\b|\bulta\b|\bsephora\b|\bregis\b|\bcost cutters\b|\bjcpenney\b|\bwalmart\b|\btarget\b|\bcostco\b)/i.test(
     String(name || "")
   );
 }
 
-function buildProspectReasonChips({ websiteStatus, rating, reviewCount, phone, opportunityScore }) {
+function getOpportunityPriority(score) {
+  const numeric = Number(score || 0);
+
+  if (numeric >= 80) {
+    return "Best Prospect";
+  }
+
+  if (numeric >= 60) {
+    return "Strong Prospect";
+  }
+
+  if (numeric >= 40) {
+    return "Needs Review";
+  }
+
+  if (numeric >= 20) {
+    return "Low Priority";
+  }
+
+  return "Not Recommended";
+}
+
+function buildProspectReasonChips({
+  websiteStatus,
+  rating,
+  reviewCount,
+  phone,
+  address,
+  bookingPlatform,
+  socialPlatform,
+  opportunityScore,
+  businessName,
+}) {
   const reasons = [];
 
   if (websiteStatus === "No Website") {
-    reasons.push("No website found");
-  } else if (websiteStatus === "Has Website") {
-    reasons.push("Has owned website");
-  } else if (websiteStatus === "Broken Website") {
-    reasons.push("Broken website");
-  } else if (websiteStatus === "Booking Link Only") {
-    reasons.push("Booking platform only");
+    reasons.push("No owned website");
   } else if (websiteStatus === "Social Only") {
     reasons.push("Social profile only");
+  } else if (websiteStatus === "Booking Link Only") {
+    reasons.push("Booking platform only");
+  } else if (websiteStatus === "Weak Website") {
+    reasons.push("Weak website");
+  } else if (websiteStatus === "Broken Website") {
+    reasons.push("Broken website");
+  } else if (websiteStatus === "Has Website") {
+    reasons.push("Strong website, lower priority");
   }
 
-  if (rating >= 4.4 && reviewCount >= 25) {
+  if (rating >= 4.3 && reviewCount >= 25) {
     reasons.push("Strong reviews");
   }
 
   if (String(phone || "").trim()) {
     reasons.push("Phone available");
+  } else {
+    reasons.push("Missing phone");
   }
 
-  if (opportunityScore >= 85) {
-    reasons.push("High opportunity");
+  if (String(address || "").trim()) {
+    reasons.push("Address available");
   }
 
-  if (!reasons.length || opportunityScore < 65) {
+  if (bookingPlatform && bookingPlatform !== "Unknown") {
+    reasons.push("Booking platform only");
+  }
+
+  if (socialPlatform && socialPlatform !== "Unknown") {
+    reasons.push("Social profile only");
+  }
+
+  if (isLikelyChainBusiness(businessName)) {
+    reasons.push("Possible chain/franchise");
+  }
+
+  if (!reasons.length) {
     reasons.push("Needs review");
   }
 
-  return reasons.slice(0, 4);
+  return [...new Set(reasons)].slice(0, 4);
+}
+
+function scoreGoogleProspect({ websiteStatus, rating, reviewCount, phone, address, businessName }) {
+  let score = 40;
+
+  if (websiteStatus === "No Website") {
+    score += 30;
+  } else if (websiteStatus === "Social Only") {
+    score += 25;
+  } else if (websiteStatus === "Booking Link Only") {
+    score += 25;
+  } else if (websiteStatus === "Broken Website") {
+    score += 25;
+  } else if (websiteStatus === "Weak Website") {
+    score += 20;
+  } else if (websiteStatus === "Needs Review") {
+    score += 10;
+  } else if (websiteStatus === "Has Website") {
+    score -= 15;
+  } else if (websiteStatus === "Unknown") {
+    score += 5;
+  }
+
+  if (String(phone || "").trim()) {
+    score += 10;
+  } else {
+    score -= 10;
+  }
+
+  if (String(address || "").trim()) {
+    score += 5;
+  }
+
+  if (rating >= 4.3) {
+    score += 10;
+  } else if (rating >= 4) {
+    score += 6;
+  } else if (rating > 0 && rating < 3.8) {
+    score -= 10;
+  }
+
+  if (reviewCount >= 25) {
+    score += 10;
+  } else if (reviewCount >= 10) {
+    score += 5;
+  } else if (reviewCount > 0 && reviewCount < 5) {
+    score -= 5;
+  }
+
+  if (!isLikelyChainBusiness(businessName)) {
+    score += 8;
+  } else {
+    score -= 15;
+  }
+
+  return Math.max(0, Math.min(100, score));
 }
 
 async function analyzeWebsiteQuality(websiteUrl, { businessName = "" } = {}) {

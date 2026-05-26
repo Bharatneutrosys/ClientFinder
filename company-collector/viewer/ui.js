@@ -136,7 +136,7 @@ export function renderDetailPanel({
     </div>
 
     <div class="detail-tag-row">
-      <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span>
+      <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")}</span>
       <span class="detail-tag">${escapeHtml(String(company.lead_score || 0))}/100 opportunity score</span>
       <span class="detail-tag">${escapeHtml(prospectStage)}</span>
       ${company.outreach_ready ? `<span class="detail-tag">Outreach ready</span>` : ""}
@@ -300,7 +300,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
         ${
           isSavedMode
             ? `<span class="stage-chip">${escapeHtml(getProspectStage(company))}</span><span class="row-subtitle">${escapeHtml(company.quote_status || "Not Started")}</span>`
-            : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || "Needs Review")}</span><span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>`
+            : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")}</span><span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>`
         }
       </div>
       <div class="prospect-signals">
@@ -377,7 +377,7 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
           <h3>${escapeHtml(company.name || "NA")}</h3>
           <p>${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</p>
         </div>
-        <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.lead_label))}">${escapeHtml(company.lead_label || formatConfidenceBadge(confidence))}</span>
+        <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(company.opportunityPriority || company.lead_label || formatConfidenceBadge(confidence))}</span>
       </div>
       <div class="company-grid-meta">
         <span>${escapeHtml(company.industry || "NA")}</span>
@@ -509,7 +509,11 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
     <div class="overview-grid">
       <div class="overview-card">
         <span class="overview-label">Opportunity score</span>
-        <strong>${escapeHtml(company.lead_label || "Needs Review")} (${escapeHtml(String(company.lead_score || 0))}/100)</strong>
+        <strong>${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")} (${escapeHtml(String(company.opportunityScore || company.lead_score || 0))}/100)</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Manual priority</span>
+        <strong>Auto</strong>
       </div>
       <div class="overview-card">
         <span class="overview-label">Prospect stage</span>
@@ -585,7 +589,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         <strong>${escapeHtml(formatSource(company.source))}</strong>
       </div>
     </div>
-    ${renderReasonChips(company.reasonChips)}
+    ${renderReasonChips(company.scoreReasons || company.reasonChips)}
 
     <div class="source-list">
       ${sourceUrls
@@ -1004,11 +1008,11 @@ function getConfidenceBadgeClass(value) {
 function getLeadBadgeClass(label) {
   const normalized = String(label || "").toLowerCase();
 
-  if (normalized === "high fit") {
+  if (normalized === "best prospect" || normalized === "strong prospect") {
     return "high_quality";
   }
 
-  if (normalized === "medium fit") {
+  if (normalized === "needs review") {
     return "medium_quality";
   }
 

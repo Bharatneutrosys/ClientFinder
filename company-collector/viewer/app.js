@@ -568,7 +568,7 @@ function applyFilters() {
         return false;
       }
 
-      if (filters.leadScore && company.lead_label !== filters.leadScore) {
+      if (filters.leadScore && (company.opportunityPriority || company.lead_label) !== filters.leadScore) {
         return false;
       }
 
@@ -637,7 +637,7 @@ function applyFilters() {
 
       return true;
     })
-    .sort((left, right) => compareCompanies(left, right, state.sortBy));
+    .sort((left, right) => compareCompanies(left, right, state.sortBy, state.activeView));
 
   if (!state.filteredCompanies.some((company) => company.id === state.selectedCompanyId)) {
     state.selectedCompanyId = state.filteredCompanies[0]?.id || null;
@@ -2021,13 +2021,16 @@ function buildTestProspect(filters) {
     bookingPlatform: "Unknown",
     rating: 4.6,
     reviews: 82,
-    reasonChips: ["No website found", "Strong reviews", "Phone available", "High opportunity"],
+    opportunityScore: 95,
+    opportunityPriority: "Best Prospect",
+    scoreReasons: ["No owned website", "Strong reviews", "Phone available", "Address available"],
+    reasonChips: ["No owned website", "Strong reviews", "Phone available", "Address available"],
     source: "manual",
     source_url: "",
     base_lead_score: 92,
-    lead_score: 92,
-    lead_label: "High Fit",
-    confidence_score: 92,
+    lead_score: 95,
+    lead_label: "Best Prospect",
+    confidence_score: 95,
     outreach_ready: false,
     review_status: "new",
     prospect_stage: "New Lead",
@@ -2158,8 +2161,11 @@ function mapLiveProspectToCompany(prospect) {
     source_url: prospect.googleProfileUrl || prospect.mapsUrl || "",
     base_lead_score: score,
     lead_score: score,
-    lead_label: score >= 80 ? "High Fit" : score >= 65 ? "Medium Fit" : "Needs Review",
-    reasonChips: normalizeReasonChips(prospect.reasonChips),
+    opportunityScore: score,
+    opportunityPriority: String(prospect.opportunityPriority || getOpportunityPriority(score)).trim() || getOpportunityPriority(score),
+    lead_label: String(prospect.opportunityPriority || getOpportunityPriority(score)).trim() || getOpportunityPriority(score),
+    scoreReasons: normalizeReasonChips(prospect.scoreReasons || prospect.reasonChips),
+    reasonChips: normalizeReasonChips(prospect.scoreReasons || prospect.reasonChips),
     confidence_score: score,
     outreach_ready: false,
     review_status: "new",
@@ -2197,8 +2203,9 @@ function augmentCompaniesWithScannerData(companies) {
     const websiteModel = buildWebsiteModel(company);
     const websiteQualityModel = buildWebsiteQualityModel(company);
     const mobileAppModel = buildMobileAppModel(company);
-    const reasonChips = normalizeReasonChips(company.reasonChips).length
-      ? normalizeReasonChips(company.reasonChips)
+    const scoreReasons = normalizeReasonChips(company.scoreReasons || company.reasonChips);
+    const reasonChips = scoreReasons.length
+      ? scoreReasons
       : buildQualificationReasonChips({ ...company, ...websiteModel, ...websiteQualityModel, ...mobileAppModel });
 
     return applyProspectWorkflow({
@@ -2206,6 +2213,7 @@ function augmentCompaniesWithScannerData(companies) {
       ...mobileAppModel,
       ...websiteModel,
       ...websiteQualityModel,
+      scoreReasons,
       reasonChips,
       contacts: mergedContacts,
       primary_contact: primaryContact,
@@ -2291,35 +2299,144 @@ function applyProspectWorkflow(company) {
     base_lead_score: Number(company.base_lead_score || company.lead_score || 0),
   });
 
-  company.lead_score = calculateOpportunityScore(company);
-  company.lead_label = company.lead_score >= 80 ? "High Fit" : company.lead_score >= 65 ? "Medium Fit" : "Needs Review";
+  company.opportunityScore = calculateOpportunityScore(company);
+  company.opportunityPriority = getOpportunityPriority(company.opportunityScore);
+  company.lead_score = company.opportunityScore;
+  company.lead_label = company.opportunityPriority;
+  company.scoreReasons = getScoreReasons(company, company.opportunityScore);
+  company.reasonChips = normalizeReasonChips(company.scoreReasons.length ? company.scoreReasons : company.reasonChips);
 
   return company;
 }
 
 function buildQualificationReasonChips(company) {
+  const scoreReasons = getScoreReasons(company, calculateOpportunityScore(company));
+  return scoreReasons.length ? scoreReasons : ["Needs review"];
+}
+
+function calculateOpportunityScore(company) {
+  let score = Number(company.base_lead_score || company.opportunityScore || company.lead_score || company.confidence_score || 40);
+  const websiteStatus = normalizeWebsiteStatus(company.websiteStatus) || "Unknown";
+  const websiteQualityStatus = String(company.websiteQualityStatus || "Not Checked").trim();
+  const rating = Number(company.rating || 0);
+  const reviewCount = Number(company.reviewCount || company.reviews || 0);
+  const phone = String(company.phone || "").trim();
+  const address = String(company.address || "").trim();
+  const mobileAppStatus = String(company.mobileAppStatus || company.mobile_app_status || "").trim();
+  const hasMobileApp = Boolean(company.hasMobileApp) || /yes|booking app only|marketplace app only/i.test(mobileAppStatus);
+
+  if (websiteStatus === "No Website") {
+    score += 30;
+  } else if (websiteStatus === "Social Only") {
+    score += 25;
+  } else if (websiteStatus === "Booking Link Only") {
+    score += 25;
+  } else if (websiteStatus === "Broken Website") {
+    score += 25;
+  } else if (websiteStatus === "Weak Website") {
+    score += 20;
+  } else if (websiteStatus === "Needs Review") {
+    score += 10;
+  } else if (websiteStatus === "Has Website") {
+    score -= 15;
+  }
+
+  if (websiteQualityStatus === "Strong Website") {
+    score -= 15;
+  } else if (websiteQualityStatus === "Weak Website") {
+    score += 20;
+  } else if (websiteQualityStatus === "Broken Website") {
+    score += 25;
+  } else if (websiteQualityStatus === "Needs Review") {
+    score += 10;
+  }
+
+  if (phone) {
+    score += 10;
+  } else {
+    score -= 10;
+  }
+
+  if (address) {
+    score += 5;
+  }
+
+  if (rating >= 4.3) {
+    score += 10;
+  } else if (rating >= 4) {
+    score += 6;
+  } else if (rating > 0 && rating < 3.8) {
+    score -= 10;
+  }
+
+  if (reviewCount >= 25) {
+    score += 10;
+  } else if (reviewCount >= 10) {
+    score += 5;
+  } else if (reviewCount > 0 && reviewCount < 5) {
+    score -= 5;
+  }
+
+  if (!isLikelyChainBusiness(company.name || company.businessName || "")) {
+    score += 8;
+  } else {
+    score -= 15;
+  }
+
+  if (hasMobileApp) {
+    score -= 10;
+  }
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function getOpportunityPriority(score) {
+  const numeric = Number(score || 0);
+
+  if (numeric >= 80) {
+    return "Best Prospect";
+  }
+
+  if (numeric >= 60) {
+    return "Strong Prospect";
+  }
+
+  if (numeric >= 40) {
+    return "Needs Review";
+  }
+
+  if (numeric >= 20) {
+    return "Low Priority";
+  }
+
+  return "Not Recommended";
+}
+
+function getScoreReasons(company, score) {
   const reasons = [];
   const websiteStatus = normalizeWebsiteStatus(company.websiteStatus) || deriveWebsiteStatus(company);
   const websiteQualityStatus = String(company.websiteQualityStatus || company.website_quality_status || "Not Checked").trim();
   const rating = Number(company.rating || 0);
   const reviewCount = Number(company.reviewCount || company.reviews || 0);
   const phone = String(company.phone || "").trim();
-  const leadScore = Number(company.lead_score || company.confidence_score || 0);
+  const address = String(company.address || "").trim();
 
   if (websiteStatus === "No Website") {
-    reasons.push("No website found");
-  } else if (websiteStatus === "Has Website") {
-    reasons.push("Has owned website");
-  } else if (websiteStatus === "Broken Website") {
-    reasons.push("Broken website");
-  } else if (websiteStatus === "Booking Link Only") {
-    reasons.push("Booking platform only");
+    reasons.push("No owned website");
   } else if (websiteStatus === "Social Only") {
     reasons.push("Social profile only");
+  } else if (websiteStatus === "Booking Link Only") {
+    reasons.push("Booking platform only");
+  } else if (websiteStatus === "Broken Website") {
+    reasons.push("Broken website");
+  } else if (websiteStatus === "Weak Website") {
+    reasons.push("Weak website");
+  } else if (websiteStatus === "Has Website") {
+    reasons.push("Strong website, lower priority");
   }
 
   if (websiteQualityStatus === "Strong Website") {
-    reasons.push("Strong website");
+    reasons.push("Strong website, lower priority");
   } else if (websiteQualityStatus === "Weak Website") {
     reasons.push("Weak website");
   } else if (websiteQualityStatus === "Broken Website") {
@@ -2328,86 +2445,50 @@ function buildQualificationReasonChips(company) {
     reasons.push("Needs review");
   }
 
-  if (rating >= 4.4 && reviewCount >= 25) {
+  if (rating >= 4.3 && reviewCount >= 25) {
     reasons.push("Strong reviews");
+  } else if (rating > 0 && rating < 3.8) {
+    reasons.push("Low rating");
+  }
+
+  if (reviewCount >= 25) {
+    reasons.push("High review count");
+  } else if (reviewCount > 0 && reviewCount < 5) {
+    reasons.push("Very low reviews");
   }
 
   if (phone) {
     reasons.push("Phone available");
-  }
-
-  if (leadScore >= 85) {
-    reasons.push("High opportunity");
-  }
-
-  if (!reasons.length || leadScore < 65) {
-    reasons.push("Needs review");
-  }
-
-  return reasons.slice(0, 4);
-}
-
-function calculateOpportunityScore(company) {
-  let score = Number(company.base_lead_score || company.lead_score || company.confidence_score || 0);
-  const websiteStatus = normalizeWebsiteStatus(company.websiteStatus) || "Unknown";
-  const websiteQualityStatus = String(company.websiteQualityStatus || "Not Checked").trim();
-  const rating = Number(company.rating || 0);
-  const reviewCount = Number(company.reviewCount || company.reviews || 0);
-  const phone = Boolean(String(company.phone || "").trim());
-
-  if (websiteStatus === "No Website") {
-    score += 12;
-  } else if (websiteStatus === "Social Only") {
-    score += 10;
-  } else if (websiteStatus === "Booking Link Only") {
-    score += 10;
-  } else if (websiteStatus === "Broken Website") {
-    score += 9;
-  } else if (websiteStatus === "Weak Website") {
-    score += 7;
-  } else if (websiteStatus === "Has Website") {
-    score -= 8;
-  } else if (websiteStatus === "Unknown") {
-    score += 2;
-  }
-
-  if (websiteQualityStatus === "Strong Website") {
-    score -= 6;
-  } else if (websiteQualityStatus === "Needs Review") {
-    score += 2;
-  } else if (websiteQualityStatus === "Weak Website") {
-    score += 8;
-  } else if (websiteQualityStatus === "Broken Website") {
-    score += 12;
-  }
-
-  if (rating >= 4.5) {
-    score += 4;
-  } else if (rating >= 4.1) {
-    score += 2;
-  } else if (rating > 0 && rating < 3.8) {
-    score -= 5;
-  }
-
-  if (reviewCount >= 75) {
-    score += 4;
-  } else if (reviewCount >= 25) {
-    score += 2;
-  } else if (reviewCount > 0 && reviewCount < 5) {
-    score -= 4;
-  }
-
-  if (phone) {
-    score += 3;
   } else {
-    score -= 6;
+    reasons.push("Missing phone");
+  }
+
+  if (address) {
+    reasons.push("Address available");
   }
 
   if (isLikelyChainBusiness(company.name || company.businessName || "")) {
-    score -= 8;
+    reasons.push("Possible chain/franchise");
+  } else {
+    reasons.push("Independent local business");
   }
 
-  return Math.max(0, Math.min(100, score));
+  if (company.hasMobileApp || /yes|booking app only|marketplace app only/i.test(String(company.mobileAppStatus || ""))) {
+    reasons.push("Mobile app present");
+  }
+
+  const priority = getOpportunityPriority(score);
+  if (priority === "Not Recommended") {
+    reasons.push("Not recommended");
+  }
+
+  return [...new Set(reasons)].slice(0, 4);
+}
+
+function isLikelyChainBusiness(name) {
+  return /(\bgreat clips\b|\bsupercuts\b|\bsport clips\b|\bfantastic sams\b|\bmassage envy\b|\beuropean wax center\b|\bthe lash lounge\b|\bamazing lash studio\b|\bhand & stone\b|\bpalm beach tan\b|\bulta\b|\bsephora\b|\bregis\b|\bcost cutters\b|\bjcpenney\b|\bwalmart\b|\btarget\b|\bcostco\b)/i.test(
+    String(name || "")
+  );
 }
 
 function getProspectWorkflow(companyId) {
@@ -2439,6 +2520,11 @@ function ensureProspectWorkflow(companyId, company) {
     last_contacted_at: company?.last_contacted_at || "",
     follow_up_priority: company?.follow_up_priority || "Normal",
     quote_status: company?.quote_status || "Not Started",
+    opportunityScore: Number(company?.opportunityScore || company?.lead_score || company?.confidence_score || 0),
+    opportunityPriority:
+      String(company?.opportunityPriority || company?.lead_label || getOpportunityPriority(company?.lead_score || 0)).trim() ||
+      getOpportunityPriority(company?.lead_score || 0),
+    scoreReasons: Array.isArray(company?.scoreReasons) ? company.scoreReasons : normalizeReasonChips(company?.reasonChips),
     websiteQualityStatus: company?.websiteQualityStatus || "Not Checked",
     websiteQualityScore: Number(company?.websiteQualityScore || 0),
     websiteQualityReasons: Array.isArray(company?.websiteQualityReasons) ? company.websiteQualityReasons : [],
@@ -3110,9 +3196,18 @@ function buildIndustryTags(company) {
   return [...new Set([...tags, ...groupTags])];
 }
 
-function compareCompanies(left, right, sortBy) {
+function compareCompanies(left, right, sortBy, activeView) {
+  const leftScore = Number(left.opportunityScore || left.lead_score || left.confidence_score || 0);
+  const rightScore = Number(right.opportunityScore || right.lead_score || right.confidence_score || 0);
+  const leftReviews = Number(left.reviewCount || left.reviews || 0);
+  const rightReviews = Number(right.reviewCount || right.reviews || 0);
+  const leftRating = Number(left.rating || 0);
+  const rightRating = Number(right.rating || 0);
+  const leftName = String(left.name || "");
+  const rightName = String(right.name || "");
+
   if (sortBy === "name") {
-    return String(left.name || "").localeCompare(String(right.name || ""));
+    return leftName.localeCompare(rightName);
   }
 
   if (sortBy === "recent") {
@@ -3122,35 +3217,30 @@ function compareCompanies(left, right, sortBy) {
   }
 
   if (sortBy === "confidence") {
-    return getCompanyConfidence(right) - getCompanyConfidence(left);
+    return rightScore - leftScore || rightReviews - leftReviews || rightRating - leftRating || leftName.localeCompare(rightName);
   }
 
-  return (
-    getCompanyScore(right) - getCompanyScore(left) ||
-    String(left.name || "").localeCompare(String(right.name || ""))
-  );
-}
-
-function getCompanyScore(company) {
-  let score = Number(company.lead_score || 0) * 2 + getCompanyConfidence(company);
-
-  if (company.has_primary_contact) {
-    score += 40;
+  if (sortBy === "reviews") {
+    return rightReviews - leftReviews || rightScore - leftScore || rightRating - leftRating || leftName.localeCompare(rightName);
   }
 
-  if (company.contacts_found) {
-    score += Math.min(20, company.contacts_found);
+  if (sortBy === "rating") {
+    return rightRating - leftRating || rightReviews - leftReviews || rightScore - leftScore || leftName.localeCompare(rightName);
   }
 
-  if (company.primary_contact?.decision_maker) {
-    score += 30;
+  if (sortBy === "score") {
+    return rightScore - leftScore || rightReviews - leftReviews || rightRating - leftRating || leftName.localeCompare(rightName);
   }
 
-  return score;
-}
+  if (sortBy === "best_match") {
+    if (activeView === "saved") {
+      return 0;
+    }
 
-function getCompanyConfidence(company) {
-  return Number(company.lead_score || company.primary_contact?.confidence_score || company.confidence_score || 0);
+    return rightScore - leftScore || rightReviews - leftReviews || rightRating - leftRating || leftName.localeCompare(rightName);
+  }
+
+  return rightScore - leftScore || rightReviews - leftReviews || rightRating - leftRating || leftName.localeCompare(rightName);
 }
 
 function syncIndustryNav() {
