@@ -117,6 +117,14 @@ export function renderDetailPanel({
   onCheckWebsiteQuality,
   onCopyOutreachTemplate,
   onMarkOutreachMilestone,
+  senderProfile,
+  outreachDrafts,
+  onSaveSenderProfile,
+  onSetOutreachTone,
+  onEditOutreachTemplate,
+  onUpdateOutreachTemplateDraft,
+  onSaveOutreachTemplate,
+  onResetOutreachTemplate,
   onApproveContact,
   onMarkBadContact,
   onCopyContactEmail,
@@ -200,7 +208,20 @@ export function renderDetailPanel({
     </div>
 
     <div class="detail-body">
-      ${renderTabContent({ company, primaryContact, otherContacts, activeTab: selectedTab })}
+      ${renderTabContent({
+        company,
+        primaryContact,
+        otherContacts,
+        activeTab: selectedTab,
+        senderProfile,
+        outreachDrafts,
+        onSaveSenderProfile,
+        onSetOutreachTone,
+        onEditOutreachTemplate,
+        onUpdateOutreachTemplateDraft,
+        onSaveOutreachTemplate,
+        onResetOutreachTemplate,
+      })}
     </div>
   `;
 
@@ -240,6 +261,41 @@ export function renderDetailPanel({
     });
   });
 
+  container.querySelectorAll("[data-outreach-edit]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.closest("[data-outreach-card]");
+      const templateBody = card?.querySelector("[data-outreach-body]");
+      const templateKey = button.getAttribute("data-outreach-edit") || "";
+      const companyId = button.getAttribute("data-company-id");
+      if (!templateBody || !companyId) {
+        return;
+      }
+
+      if (templateBody.hasAttribute("readonly")) {
+        onEditOutreachTemplate(companyId, templateKey);
+      } else {
+        onSaveOutreachTemplate(companyId, templateKey, templateBody.value || templateBody.textContent || "");
+      }
+    });
+  });
+
+  container.querySelectorAll("[data-outreach-reset]").forEach((button) => {
+    button.addEventListener("click", () => {
+      onResetOutreachTemplate(button.getAttribute("data-company-id"), button.getAttribute("data-outreach-reset") || "");
+    });
+  });
+
+  container.querySelectorAll("[data-outreach-body]").forEach((textarea) => {
+    textarea.addEventListener("input", () => {
+      const card = textarea.closest("[data-outreach-card]");
+      const templateKey = card?.getAttribute("data-outreach-card") || "";
+      const companyId = card?.querySelector("[data-outreach-copy]")?.getAttribute("data-company-id") || "";
+      if (templateKey && companyId && onUpdateOutreachTemplateDraft) {
+        onUpdateOutreachTemplateDraft(companyId, templateKey, textarea.value || "");
+      }
+    });
+  });
+
   container.querySelectorAll("[data-outreach-mark]").forEach((button) => {
     button.addEventListener("click", () => {
       onMarkOutreachMilestone(
@@ -249,6 +305,18 @@ export function renderDetailPanel({
       );
     });
   });
+
+  const toneSelect = container.querySelector("[data-outreach-tone]");
+  if (toneSelect) {
+    toneSelect.addEventListener("change", () =>
+      onSetOutreachTone(toneSelect.getAttribute("data-company-id") || company.id, toneSelect.value)
+    );
+  }
+
+  const saveSenderButton = container.querySelector("[data-save-sender-profile]");
+  if (saveSenderButton) {
+    saveSenderButton.addEventListener("click", () => onSaveSenderProfile(readSenderProfilePayload(container)));
+  }
 
   const saveButton = container.querySelector("[data-save-company]");
   if (saveButton) {
@@ -468,7 +536,20 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
   `;
 }
 
-function renderTabContent({ company, primaryContact, otherContacts, activeTab }) {
+function renderTabContent({
+  company,
+  primaryContact,
+  otherContacts,
+  activeTab,
+  senderProfile = {},
+  outreachDrafts = {},
+  onSaveSenderProfile,
+  onSetOutreachTone,
+  onEditOutreachTemplate,
+  onUpdateOutreachTemplateDraft,
+  onSaveOutreachTemplate,
+  onResetOutreachTemplate,
+}) {
   if (activeTab === "contact") {
     return `
       ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("No verified public contact person found yet.")}
@@ -492,7 +573,64 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
 
   if (activeTab === "outreach") {
     const outreachContext = getOutreachContext(company);
+    const customTemplates = company.outreach_templates || {};
+    const draftState = outreachDrafts?.[company.id] || {};
+    const tone = draftState.tone || company.outreach_tone || "Professional";
+    const templateKeyMap = {
+      intro_email: {
+        label: "Intro Email",
+        purpose: "Short, respectful first touch.",
+        markLabel: "Mark intro email sent",
+        milestone: "Initial intro email sent",
+        actionMessage: "Marked intro email sent",
+      },
+      sms_message: {
+        label: "SMS / WhatsApp",
+        purpose: "Very short message for text or WhatsApp.",
+        markLabel: "Mark message sent",
+        milestone: "WhatsApp/message sent",
+        actionMessage: "Marked message sent",
+      },
+      call_script: {
+        label: "Phone Call Script",
+        purpose: "Quick call opener with a simple ask.",
+        markLabel: "Mark call attempted",
+        milestone: "Call attempted",
+        actionMessage: "Marked call attempted",
+      },
+      onsite_visit: {
+        label: "Onsite Visit Script",
+        purpose: "In-person opener for the owner or manager.",
+        markLabel: "Mark onsite visit done",
+        milestone: "Onsite visit done",
+        actionMessage: "Marked onsite visit done",
+      },
+      follow_up: {
+        label: "Follow-Up Message",
+        purpose: "A brief check-in after first contact.",
+        markLabel: "Mark follow-up sent",
+        milestone: "Follow-up sent",
+        actionMessage: "Marked follow-up sent",
+      },
+      quote_follow_up: {
+        label: "Quote Follow-Up",
+        purpose: "Follow up after sending a quote.",
+        markLabel: "Mark quote follow-up sent",
+        milestone: "Follow-up sent",
+        actionMessage: "Marked quote follow-up sent",
+      },
+    };
+
+    const templateBodies = {
+      intro_email: buildOutreachTemplateBody("intro_email", company, outreachContext, senderProfile, tone),
+      sms_message: buildOutreachTemplateBody("sms_message", company, outreachContext, senderProfile, tone),
+      call_script: buildOutreachTemplateBody("call_script", company, outreachContext, senderProfile, tone),
+      onsite_visit: buildOutreachTemplateBody("onsite_visit", company, outreachContext, senderProfile, tone),
+      follow_up: buildOutreachTemplateBody("follow_up", company, outreachContext, senderProfile, tone),
+      quote_follow_up: buildOutreachTemplateBody("quote_follow_up", company, outreachContext, senderProfile, tone),
+    };
     return `
+      ${renderSenderProfileCard(senderProfile, tone, company.id)}
       <section class="workflow-card">
         <p class="detail-section-title">Outreach Context</p>
         <div class="reason-chip-row">
@@ -500,60 +638,30 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         </div>
         <p class="toolbar-subtle">${escapeHtml(outreachContext.summary)}</p>
       </section>
-      ${renderOutreachTemplateCard({
-        company,
-        templateKey: "intro_email",
-        label: "Intro Email",
-        text: generateIntroEmail(company, outreachContext),
-        markLabel: "Mark intro email sent",
-        milestone: "Initial intro email sent",
-        actionMessage: "Marked intro email sent",
-      })}
-      ${renderOutreachTemplateCard({
-        company,
-        templateKey: "sms_message",
-        label: "SMS / WhatsApp",
-        text: generateSmsTemplate(company, outreachContext),
-        markLabel: "Mark message sent",
-        milestone: "WhatsApp/message sent",
-        actionMessage: "Marked message sent",
-      })}
-      ${renderOutreachTemplateCard({
-        company,
-        templateKey: "call_script",
-        label: "Phone Call Script",
-        text: generateCallScript(company, outreachContext),
-        markLabel: "Mark call attempted",
-        milestone: "Call attempted",
-        actionMessage: "Marked call attempted",
-      })}
-      ${renderOutreachTemplateCard({
-        company,
-        templateKey: "onsite_visit",
-        label: "Onsite Visit Script",
-        text: generateOnsiteVisitScript(company, outreachContext),
-        markLabel: "Mark onsite visit done",
-        milestone: "Onsite visit done",
-        actionMessage: "Marked onsite visit done",
-      })}
-      ${renderOutreachTemplateCard({
-        company,
-        templateKey: "follow_up",
-        label: "Follow-Up Message",
-        text: generateFollowUpTemplate(company, outreachContext),
-        markLabel: "Mark follow-up sent",
-        milestone: "Follow-up sent",
-        actionMessage: "Marked follow-up sent",
-      })}
-      ${renderOutreachTemplateCard({
-        company,
-        templateKey: "quote_follow_up",
-        label: "Quote Follow-Up",
-        text: generateQuoteFollowUpTemplate(company, outreachContext),
-        markLabel: "Mark follow-up sent",
-        milestone: "Follow-up sent",
-        actionMessage: "Marked quote follow-up sent",
-      })}
+      ${Object.keys(templateKeyMap)
+        .map((templateKey) => {
+          const meta = templateKeyMap[templateKey];
+          const customText = customTemplates[templateKey];
+          const draft = draftState[templateKey] || {};
+          const isEditing = Boolean(draft.editing);
+          const text = isEditing
+            ? draft.text || customText || templateBodies[templateKey]
+            : customText || draft.text || templateBodies[templateKey];
+          return renderOutreachTemplateCard({
+            company,
+            templateKey,
+            label: meta.label,
+            purpose: meta.purpose,
+            text,
+            isEditing,
+            hasCustom: Boolean(customText),
+            saveLabel: "Save",
+            markLabel: meta.markLabel,
+            milestone: meta.milestone,
+            actionMessage: meta.actionMessage,
+          });
+        })
+        .join("")}
     `;
   }
 
@@ -840,11 +948,26 @@ function renderCommunicationLog(company) {
   `;
 }
 
-function renderOutreachTemplateCard({ company, templateKey, label, text, markLabel, milestone, actionMessage }) {
+function renderOutreachTemplateCard({
+  company,
+  templateKey,
+  label,
+  purpose,
+  text,
+  isEditing,
+  hasCustom,
+  saveLabel,
+  markLabel,
+  milestone,
+  actionMessage,
+}) {
   return `
     <section class="workflow-card" data-outreach-card="${escapeAttribute(templateKey)}">
       <div class="workflow-header-row">
-        <p class="detail-section-title">${escapeHtml(label)}</p>
+        <div>
+          <p class="detail-section-title">${escapeHtml(label)}</p>
+          ${purpose ? `<p class="toolbar-subtle">${escapeHtml(purpose)}</p>` : ""}
+        </div>
         <div class="workflow-actions">
           <button
             class="secondary-btn"
@@ -858,15 +981,67 @@ function renderOutreachTemplateCard({ company, templateKey, label, text, markLab
           <button
             class="secondary-btn"
             type="button"
-            data-outreach-mark="${escapeAttribute(milestone)}"
-            data-outreach-message="${escapeAttribute(actionMessage)}"
+            data-outreach-edit="${escapeAttribute(templateKey)}"
             data-company-id="${escapeAttribute(company.id)}"
           >
-            ${escapeHtml(markLabel)}
+            ${escapeHtml(isEditing ? saveLabel || "Save" : "Edit")}
           </button>
+          <button
+            class="secondary-btn"
+            type="button"
+            data-outreach-reset="${escapeAttribute(templateKey)}"
+            data-company-id="${escapeAttribute(company.id)}"
+          >
+            Reset
+          </button>
+          ${
+            milestone
+              ? `
+                <button
+                  class="secondary-btn"
+                  type="button"
+                  data-outreach-mark="${escapeAttribute(milestone)}"
+                  data-outreach-message="${escapeAttribute(actionMessage)}"
+                  data-company-id="${escapeAttribute(company.id)}"
+                >
+                  ${escapeHtml(markLabel)}
+                </button>
+              `
+              : ""
+          }
         </div>
       </div>
-      <textarea class="workflow-textarea outreach-template" readonly data-outreach-body rows="8">${escapeHtml(text)}</textarea>
+      <textarea class="workflow-textarea outreach-template" ${isEditing ? "" : "readonly"} data-outreach-body rows="8">${escapeHtml(text)}</textarea>
+      ${
+        hasCustom
+          ? `<p class="toolbar-subtle">Saved edit active for this prospect.</p>`
+          : `<p class="toolbar-subtle">Save prospect to keep edits.</p>`
+      }
+    </section>
+  `;
+}
+
+function renderSenderProfileCard(senderProfile, tone, companyId) {
+  return `
+    <section class="workflow-card">
+      <p class="detail-section-title">Sender Info</p>
+      <p class="toolbar-subtle">Personal details used in outreach templates.</p>
+      <div class="workflow-form-grid">
+        <label class="inline-field"><span>Your Name</span><input type="text" value="${escapeAttribute(senderProfile?.yourName || "")}" data-sender-your-name /></label>
+        <label class="inline-field"><span>Company Name</span><input type="text" value="${escapeAttribute(senderProfile?.companyName || "")}" data-sender-company-name /></label>
+        <label class="inline-field"><span>Phone</span><input type="text" value="${escapeAttribute(senderProfile?.phone || "")}" data-sender-phone /></label>
+        <label class="inline-field"><span>Email</span><input type="email" value="${escapeAttribute(senderProfile?.email || "")}" data-sender-email /></label>
+        <label class="inline-field"><span>Website / Portfolio URL</span><input type="url" value="${escapeAttribute(senderProfile?.website || "")}" data-sender-website /></label>
+        <label class="inline-field"><span>Tone</span>
+          <select data-outreach-tone>
+            ${["Friendly", "Professional", "Very Short", "Follow-Up"].map((option) => `<option value="${escapeAttribute(option)}" ${option === tone ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+      <label class="inline-field"><span>Short Service Pitch</span><textarea class="workflow-textarea" rows="3" data-sender-pitch>${escapeHtml(senderProfile?.pitch || "I help local businesses create clean, mobile-friendly websites that make services, photos, and contact options easier for customers to find.")}</textarea></label>
+      <div class="workflow-actions">
+        <button class="primary-btn" type="button" data-save-sender-profile="${escapeAttribute(companyId)}">Save Sender Info</button>
+      </div>
     </section>
   `;
 }
@@ -1059,6 +1234,31 @@ function renderWorkflowActivityLog(company) {
       action: entry.action || "update",
       message: entry.message || entry.outcome || "Updated",
     }))
+    .filter((entry, index, list) => {
+      const key = [
+        entry.source || "",
+        entry.activity_type || "",
+        entry.method || "",
+        entry.message || "",
+        entry.notes || "",
+        entry.date || "",
+      ]
+        .join("|")
+        .toLowerCase();
+      return list.findIndex((candidate) => {
+        const candidateKey = [
+          candidate.source || "",
+          candidate.activity_type || "",
+          candidate.method || "",
+          candidate.message || "",
+          candidate.notes || "",
+          candidate.date || "",
+        ]
+          .join("|")
+          .toLowerCase();
+        return candidateKey === key;
+      }) === index;
+    })
     .sort((left, right) => String(right.created_at || right.date || "").localeCompare(String(left.created_at || left.date || "")));
 
   if (!entries.length) {
@@ -1322,6 +1522,17 @@ function readCommunicationPayload(container, companyId) {
     notes: container.querySelector("[data-communication-note-input]")?.value || "",
     nextAction: container.querySelector("[data-communication-next-action]")?.value || "",
     nextFollowUp: container.querySelector("[data-communication-follow-up]")?.value || "",
+  };
+}
+
+function readSenderProfilePayload(container) {
+  return {
+    yourName: container.querySelector("[data-sender-your-name]")?.value || "",
+    companyName: container.querySelector("[data-sender-company-name]")?.value || "",
+    phone: container.querySelector("[data-sender-phone]")?.value || "",
+    email: container.querySelector("[data-sender-email]")?.value || "",
+    website: container.querySelector("[data-sender-website]")?.value || "",
+    pitch: container.querySelector("[data-sender-pitch]")?.value || "",
   };
 }
 
@@ -1644,6 +1855,8 @@ function getOutreachContext(company) {
   const socialPlatform = company?.social_platform || company?.socialPlatform || "";
   const opportunityPriority = company?.opportunity_priority || company?.opportunityPriority || "Needs Review";
   const websiteQualityScore = company?.website_quality_score ?? company?.websiteQualityScore ?? null;
+  const contactName =
+    company?.primary_contact?.name || company?.contact_name || company?.owner_name || company?.owner || company?.manager_name || "";
   const siteQualityNote =
     websiteQualityStatus === "Weak Website" || websiteQualityStatus === "Needs Review"
       ? "There is room to improve the site for mobile visitors, services, and booking conversion."
@@ -1692,6 +1905,7 @@ function getOutreachContext(company) {
     websiteQualityScore,
     bookingPlatform,
     socialPlatform,
+    contactName,
     opportunityPriority,
     hook,
     valueLine,
@@ -1700,71 +1914,153 @@ function getOutreachContext(company) {
   };
 }
 
-function generateIntroEmail(company, context = getOutreachContext(company)) {
-  const line1 = `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""},`;
-  const line2 = `I work with local ${context.businessType.toLowerCase()} businesses and wanted to reach out because ${context.hook.toLowerCase()}`;
-  const line3 = context.valueLine;
-  const line4 = `${context.askLine}`;
-  return [line1, "", line2, line3, line4, "", "Best,", "Cody"].join("\n");
+function buildOutreachTemplateBody(templateKey, company, context, senderProfile, tone) {
+  return generateTemplateByType(templateKey, context, senderProfile, tone);
 }
 
-function generateSmsTemplate(company, context = getOutreachContext(company)) {
-  const leadIn =
+function generateTemplateByType(templateKey, context, senderProfile = {}, tone = "Professional") {
+  const toneLabel = getTemplateToneVariant(tone);
+  const greetingName =
+    context.contactName ||
+    (context.businessName && context.businessName !== "your business" ? context.businessName : "");
+  const senderName = String(senderProfile.yourName || "").trim();
+  const signatureName = senderName || "Cody";
+  const senderCompany = String(senderProfile.companyName || "").trim();
+  const senderPhone = String(senderProfile.phone || "").trim();
+  const senderEmail = String(senderProfile.email || "").trim();
+  const senderWebsite = String(senderProfile.website || "").trim();
+  const pitch = String(
+    senderProfile.pitch ||
+      "I help local businesses create clean, mobile-friendly websites that make services, photos, and contact options easier for customers to find."
+  ).trim();
+  const contactLine = senderCompany || senderPhone || senderEmail || senderWebsite ? [senderCompany, senderPhone].filter(Boolean).join(" • ") : "";
+  const noWebsiteLine =
     context.websiteStatus === "No Website"
-      ? "I did not find a dedicated website"
+      ? "I did not find a dedicated website."
       : context.websiteStatus === "Social Only"
-      ? "I found social pages, but not a dedicated website"
+      ? "I found social pages, but a dedicated website could help build more trust and control the message."
       : context.websiteStatus === "Booking Link Only"
-      ? "I found a booking presence, but not a full website"
+      ? "I found a booking presence, but a dedicated website would give you more room for services, photos, and branding."
       : context.websiteStatus === "Broken Website"
-      ? "your current website looks like it may need attention"
-      : "I took a quick look at your online presence";
-  return `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""} - I work with local ${context.businessType.toLowerCase()} businesses. ${leadIn}. ${context.valueLine} Open to a quick chat this week?`;
+      ? "The current website looks like it may not be working consistently."
+      : context.websiteStatus === "Weak Website"
+      ? "The current website looks like it could be clearer on mobile, services, gallery, and appointment flow."
+      : context.websiteQualityStatus === "Strong Website"
+      ? "You already have a solid website, so I’d focus on small improvements rather than a rebuild."
+      : "I wanted to reach out because your online presence looks worth a closer look.";
+  const shortHook =
+    toneLabel === "Very Short"
+      ? `${context.businessName || "your business"} ${noWebsiteLine.toLowerCase()}`
+      : noWebsiteLine;
+
+  const footer = [
+    `Best,`,
+    signatureName,
+    senderCompany || "",
+    contactLine || "",
+    senderEmail || "",
+    senderWebsite || "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  if (templateKey === "intro_email") {
+    return [
+      `Hi${greetingName ? ` ${greetingName}` : ""},`,
+      "",
+      toneLabel === "Friendly"
+        ? `I came across ${context.businessName || "your business"} while looking at local ${context.businessType.toLowerCase()} businesses.`
+        : `I work with local ${context.businessType.toLowerCase()} businesses and wanted to reach out.`,
+      shortHook,
+      pitch,
+      context.askLine,
+      "",
+      footer,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (templateKey === "sms_message") {
+    const line =
+      toneLabel === "Very Short"
+        ? `${context.businessName || "Hi"} - ${shortHook} ${context.valueLine}`
+        : `${greetingName ? `Hi ${greetingName}` : "Hi"} - I work with local ${context.businessType.toLowerCase()} businesses. ${shortHook} ${context.valueLine} Open to a quick chat?`;
+    return line
+      .replace(/\s+/g, " ")
+      .replace("  ", " ")
+      .trim();
+  }
+
+  if (templateKey === "call_script") {
+    return [
+      `Hi, this is ${signatureName}. Am I speaking with the owner or manager at ${context.businessName}?`,
+      "",
+      toneLabel === "Very Short"
+        ? shortHook
+        : `I work with local ${context.businessType.toLowerCase()} businesses, and I reached out because ${shortHook.toLowerCase()}`,
+      context.valueLine,
+      "",
+      "I only need a minute - would you be open to hearing a couple quick ideas?",
+      "",
+      "If yes, I can send a short note with next steps.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (templateKey === "onsite_visit") {
+    return [
+      `Hi, I’m ${signatureName}. I’m visiting a few ${context.businessType.toLowerCase()} businesses${context.location ? ` in ${context.location}` : ""}.`,
+      "",
+      shortHook,
+      context.valueLine,
+      "",
+      "Is the owner or manager available for a quick conversation?",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (templateKey === "follow_up") {
+    return [
+      `Hi${greetingName ? ` ${greetingName}` : ""},`,
+      "",
+      toneLabel === "Follow-Up" ? "Just checking back in on my last message." : "Just following up on my last note.",
+      context.valueLine,
+      context.askLine,
+      "",
+      "If now is not the right time, no problem - happy to reconnect later.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (templateKey === "quote_follow_up") {
+    return [
+      `Hi${greetingName ? ` ${greetingName}` : ""},`,
+      "",
+      "I wanted to check in on the quote I shared.",
+      "If you have any questions or want me to adjust anything, I'm happy to help.",
+      "If it makes sense, we can also talk through next steps briefly.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return shortHook;
 }
 
-function generateCallScript(company, context = getOutreachContext(company)) {
-  return [
-    `Hi, this is Cody. Am I speaking with the owner or manager at ${context.businessName}?`,
-    "",
-    `I work with local ${context.businessType.toLowerCase()} businesses, and I reached out because ${context.hook.toLowerCase()}`,
-    context.valueLine,
-    "",
-    "I only need a minute - would you be open to hearing a couple quick ideas?",
-    "",
-    "If yes, the next step would be a short follow-up conversation."
-  ].join("\n");
-}
-
-function generateOnsiteVisitScript(company, context = getOutreachContext(company)) {
-  const locationLine = context.location ? `for ${context.location}` : "for your area";
-  return [
-    `Hi, I'm Cody. I'm visiting a few ${context.businessType.toLowerCase()} businesses ${locationLine}.`,
-    "",
-    `I wanted to stop by because ${context.hook.toLowerCase()}`,
-    context.valueLine,
-    "",
-    "Is the owner or manager available for a quick conversation?",
-  ].join("\n");
-}
-
-function generateFollowUpTemplate(company, context = getOutreachContext(company)) {
-  return [
-    `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""},`,
-    "",
-    "Just following up on my last note.",
-    context.valueLine,
-    context.askLine,
-    "",
-    "If now is not the right time, no problem - happy to reconnect later.",
-  ].join("\n");
-}
-
-function generateQuoteFollowUpTemplate(company, context = getOutreachContext(company)) {
-  return [
-    `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""},`,
-    "",
-    "I wanted to check in on the quote I shared.",
-    "If you have any questions or want me to adjust anything, I'm happy to help.",
-    "If it makes sense, we can also talk through next steps briefly.",
-  ].join("\n");
+function getTemplateToneVariant(tone) {
+  const normalized = String(tone || "Professional").trim().toLowerCase();
+  if (normalized === "friendly") {
+    return "Friendly";
+  }
+  if (normalized === "very short") {
+    return "Very Short";
+  }
+  if (normalized === "follow-up") {
+    return "Follow-Up";
+  }
+  return "Professional";
 }

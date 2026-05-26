@@ -9,6 +9,7 @@ const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
 const PROSPECT_WORKFLOWS_KEY = "find-any-company.prospect-workflows";
 const MANUAL_PROSPECTS_KEY = "find-any-company.manual-prospects";
 const HIDDEN_PROSPECTS_KEY = "find-any-company.hidden-prospects";
+const SENDER_PROFILE_KEY = "find-any-company.sender-profile";
 const SCAN_QUEUE_KEY = "find-any-company.scan-queue";
 const DEFAULT_BATCH_CITIES = [
   { city: "Dallas", state: "TX" },
@@ -93,6 +94,8 @@ const state = {
   hiddenProspects: loadHiddenProspects(),
   prospectWorkflows: loadProspectWorkflows(),
   manualProspects: loadManualProspects(),
+  senderProfile: loadSenderProfile(),
+  outreachTemplateDrafts: {},
   targetCities: [],
   batchCollect: {
     running: false,
@@ -1338,6 +1341,14 @@ function renderDetail() {
     onCheckWebsiteQuality: checkWebsiteQuality,
     onCopyOutreachTemplate: copyOutreachTemplate,
     onMarkOutreachMilestone: markOutreachMilestone,
+    senderProfile: state.senderProfile,
+    outreachDrafts: state.outreachTemplateDrafts,
+    onSaveSenderProfile: saveSenderProfile,
+    onSetOutreachTone: setOutreachTone,
+    onEditOutreachTemplate: editOutreachTemplate,
+    onUpdateOutreachTemplateDraft: updateOutreachTemplateDraft,
+    onSaveOutreachTemplate: saveOutreachTemplate,
+    onResetOutreachTemplate: resetOutreachTemplate,
     onApproveContact: (payload) => handleReviewUpdate(payload, "approved"),
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
     onCopyContactEmail: (payload) => copyToClipboard(payload.email, "Email copied."),
@@ -1460,18 +1471,178 @@ async function copyOutreachTemplate(companyId, templateKey, templateLabel, templ
   }
 }
 
+function editOutreachTemplate(companyId, templateKey) {
+  if (!companyId || !templateKey) {
+    return;
+  }
+
+  state.outreachTemplateDrafts[companyId] = {
+    ...(state.outreachTemplateDrafts[companyId] || {}),
+    [templateKey]: {
+      ...(state.outreachTemplateDrafts[companyId]?.[templateKey] || {}),
+      editing: true,
+    },
+  };
+  renderDetail();
+}
+
+function updateOutreachTemplateDraft(companyId, templateKey, templateText) {
+  if (!companyId || !templateKey) {
+    return;
+  }
+
+  state.outreachTemplateDrafts[companyId] = {
+    ...(state.outreachTemplateDrafts[companyId] || {}),
+    [templateKey]: {
+      ...(state.outreachTemplateDrafts[companyId]?.[templateKey] || {}),
+      text: String(templateText || ""),
+      editing: true,
+    },
+  };
+}
+
+function saveOutreachTemplate(companyId, templateKey, templateText) {
+  const company = state.companies.find((item) => item.id === companyId);
+  const text = String(templateText || "").trim();
+  if (!company || !templateKey || !text) {
+    return;
+  }
+
+  const label = templateLabelFromKey(templateKey);
+  const savedId = findSavedProspectId(company);
+  if (savedId) {
+    ensureSavedProspect(company);
+    const workflow = getProspectWorkflow(company.id);
+    state.prospectWorkflows[company.id] = {
+      ...workflow,
+      outreach_templates: {
+        ...(workflow.outreach_templates || {}),
+        [templateKey]: text,
+      },
+      lastUpdatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    persistProspectWorkflows();
+    applyProspectWorkflow(company);
+  } else {
+    state.outreachTemplateDrafts[companyId] = {
+      ...(state.outreachTemplateDrafts[companyId] || {}),
+      [templateKey]: {
+        ...(state.outreachTemplateDrafts[companyId]?.[templateKey] || {}),
+        text,
+        editing: false,
+      },
+    };
+  }
+
+  if (state.outreachTemplateDrafts[companyId]?.[templateKey]) {
+    state.outreachTemplateDrafts[companyId][templateKey] = {
+      ...state.outreachTemplateDrafts[companyId][templateKey],
+      text,
+      editing: false,
+    };
+  }
+
+  if (savedId) {
+    recordProspectActivity(company.id, `Edited ${label}`, "Manual", `template-edit-${normalizeText(templateKey)}`);
+  }
+  elements.statusMessage.textContent = `${label} saved.${savedId ? "" : " Save the prospect to keep edits."}`;
+  renderDetail();
+}
+
+function resetOutreachTemplate(companyId, templateKey) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company || !templateKey) {
+    return;
+  }
+
+  const label = templateLabelFromKey(templateKey);
+  if (findSavedProspectId(company)) {
+    ensureSavedProspect(company);
+    const workflow = getProspectWorkflow(company.id);
+    const outreachTemplates = { ...(workflow.outreach_templates || {}) };
+    delete outreachTemplates[templateKey];
+    state.prospectWorkflows[company.id] = {
+      ...workflow,
+      outreach_templates: outreachTemplates,
+      lastUpdatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    persistProspectWorkflows();
+    applyProspectWorkflow(company);
+  }
+
+  if (state.outreachTemplateDrafts[companyId]) {
+    delete state.outreachTemplateDrafts[companyId][templateKey];
+  }
+
+  if (findSavedProspectId(company)) {
+    recordProspectActivity(company.id, `Reset ${label} to default`, "Manual", `template-reset-${normalizeText(templateKey)}`);
+  }
+  elements.statusMessage.textContent = `${label} reset to default.`;
+  renderDetail();
+}
+
+function setOutreachTone(companyId, tone) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  const nextTone = String(tone || "Professional").trim() || "Professional";
+  if (findSavedProspectId(company)) {
+    ensureSavedProspect(company);
+    const workflow = getProspectWorkflow(company.id);
+    state.prospectWorkflows[company.id] = {
+      ...workflow,
+      outreach_tone: nextTone,
+      lastUpdatedAt: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    persistProspectWorkflows();
+    applyProspectWorkflow(company);
+  } else {
+    state.outreachTemplateDrafts[company.id] = {
+      ...(state.outreachTemplateDrafts[company.id] || {}),
+      tone: nextTone,
+    };
+  }
+
+  renderDetail();
+}
+
+function saveSenderProfile(profile) {
+  state.senderProfile = {
+    yourName: String(profile?.yourName || "").trim(),
+    companyName: String(profile?.companyName || "").trim(),
+    phone: String(profile?.phone || "").trim(),
+    email: String(profile?.email || "").trim(),
+    website: String(profile?.website || "").trim(),
+    pitch: String(profile?.pitch || "").trim(),
+  };
+  persistSenderProfile();
+  elements.statusMessage.textContent = "Sender profile saved.";
+  renderDetail();
+}
+
 function markOutreachMilestone(companyId, milestone, message) {
   const company = state.companies.find((item) => item.id === companyId);
   if (!company || !milestone) {
     return;
   }
 
-  const workflow = getProspectWorkflow(companyId);
-  const alreadyComplete = Boolean(workflow.milestones && workflow.milestones[milestone]);
-  toggleMilestone(companyId, milestone, true);
-  if (!alreadyComplete && company && findSavedProspectId(company)) {
-    recordProspectActivity(company.id, message || `Marked ${milestone}`, "User", `mark-${normalizeText(milestone)}`);
-  }
+  addActivityEntry(company.id, {
+    activityType: milestoneToActivityType(milestone),
+    method: milestoneToMethod(milestone),
+    date: getTodayDateKey(),
+    outcome: message || "",
+    notes: message || "",
+    nextAction: getSuggestedNextAction(company),
+    nextFollowUp: getSuggestedFollowUpDate(milestoneToActivityType(milestone), getTodayDateKey(), message || ""),
+    source: "Manual",
+    action: `mark-${normalizeText(milestone)}`,
+    message: message || `Marked ${milestone}`,
+  });
 }
 
 function updateProspectStatus(companyId, nextStatus) {
@@ -2652,6 +2823,13 @@ function applyProspectWorkflow(company) {
         : [],
     websiteCheckStatus: workflow.websiteCheckStatus || company.websiteCheckStatus || "Not Checked",
     websiteCheckedAt: workflow.websiteCheckedAt || company.websiteCheckedAt || "",
+    outreach_templates:
+      workflow.outreach_templates && typeof workflow.outreach_templates === "object"
+        ? workflow.outreach_templates
+        : company.outreach_templates && typeof company.outreach_templates === "object"
+          ? company.outreach_templates
+          : {},
+    outreach_tone: workflow.outreach_tone || company.outreach_tone || "Professional",
     communication_logs: allCommunicationLogs,
     activity_log: activityLog.length ? activityLog : Array.isArray(company.activity_log) ? company.activity_log : [],
     notes,
@@ -2905,6 +3083,8 @@ function ensureProspectWorkflow(companyId, company) {
     websiteQualityReasons: Array.isArray(company?.websiteQualityReasons) ? company.websiteQualityReasons : [],
     websiteCheckStatus: company?.websiteCheckStatus || "Not Checked",
     websiteCheckedAt: company?.websiteCheckedAt || "",
+    outreach_templates: company?.outreach_templates && typeof company.outreach_templates === "object" ? company.outreach_templates : {},
+    outreach_tone: company?.outreach_tone || "Professional",
     archived: Boolean(company?.archived),
     archived_at: company?.archived_at || "",
     activity_log: Array.isArray(company?.activity_log) ? company.activity_log : [],
@@ -2994,6 +3174,59 @@ function normalizeActivityType(value) {
   }[normalizeText(label)];
 
   return match || titleCase(label);
+}
+
+function templateLabelFromKey(templateKey) {
+  const labels = {
+    intro_email: "Intro Email",
+    sms_message: "SMS / WhatsApp",
+    call_script: "Phone Call Script",
+    onsite_visit: "Onsite Visit Script",
+    follow_up: "Follow-Up Message",
+    quote_follow_up: "Quote Follow-Up",
+  };
+  return labels[templateKey] || titleCase(templateKey);
+}
+
+function milestoneToActivityType(milestone) {
+  const normalized = normalizeText(milestone);
+  const map = {
+    "initialintroemailsent": "Intro Email Sent",
+    "callattempted": "Call Attempted",
+    "whatsappmessagesent": "Message Sent",
+    "onsitevisitdone": "Onsite Visit Done",
+    "virtualmeetingdone": "Virtual Meeting Done",
+    "clientresponded": "Client Responded",
+    "requirementsdiscussed": "Requirements Discussed",
+    "quoterequested": "Quote Requested",
+    "quotesent": "Quote Sent",
+    "followupsent": "Follow-Up Sent",
+    "contractsent": "Contract Sent",
+    "contractreceived": "Contract Received",
+    "advancepaymentreceived": "Advance Payment Received",
+    "savedtoprospects": "Saved",
+  };
+  return map[normalized] || normalizeActivityType(milestone);
+}
+
+function milestoneToMethod(milestone) {
+  const normalized = normalizeText(milestone);
+  if (normalized.includes("email")) {
+    return "Email";
+  }
+  if (normalized.includes("whatsapp") || normalized.includes("message")) {
+    return "WhatsApp";
+  }
+  if (normalized.includes("call")) {
+    return "Call";
+  }
+  if (normalized.includes("onsite")) {
+    return "Onsite Visit";
+  }
+  if (normalized.includes("virtual")) {
+    return "Virtual Meeting";
+  }
+  return "Other";
 }
 
 function mapMethodToActivityType(method) {
@@ -3994,6 +4227,25 @@ function loadManualProspects() {
 
 function persistManualProspects() {
   writeLocalJson(MANUAL_PROSPECTS_KEY, state.manualProspects);
+}
+
+function loadSenderProfile() {
+  const parsed = readLocalJson(SENDER_PROFILE_KEY, null);
+  return {
+    yourName: String(parsed?.yourName || "").trim(),
+    companyName: String(parsed?.companyName || "").trim(),
+    phone: String(parsed?.phone || "").trim(),
+    email: String(parsed?.email || "").trim(),
+    website: String(parsed?.website || "").trim(),
+    pitch: String(
+      parsed?.pitch ||
+        "I help local businesses create clean, mobile-friendly websites that make services, photos, and contact options easier for customers to find."
+    ).trim(),
+  };
+}
+
+function persistSenderProfile() {
+  writeLocalJson(SENDER_PROFILE_KEY, state.senderProfile);
 }
 
 function loadHiddenProspects() {
