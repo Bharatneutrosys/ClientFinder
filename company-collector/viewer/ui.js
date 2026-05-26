@@ -95,6 +95,7 @@ export function renderDetailPanel({
   onAddProspectNote,
   onSetNextFollowUp,
   onToggleMilestone,
+  onCheckWebsiteQuality,
   onApproveContact,
   onMarkBadContact,
   onCopyContactEmail,
@@ -147,6 +148,9 @@ export function renderDetailPanel({
     <div class="detail-actions">
       <a class="primary-btn inline-link-btn" href="${escapeAttribute(company.website || "#")}" target="_blank" rel="noreferrer">Website</a>
       <button class="secondary-btn" type="button" data-detail-scan="${escapeAttribute(company.id)}">Deep Scan</button>
+      <button class="secondary-btn" type="button" data-check-website-quality="${escapeAttribute(company.id)}">
+        ${company.websiteCheckStatus === "Checking" ? "Checking..." : "Check Website Quality"}
+      </button>
       ${
         failureReason
           ? `<button class="secondary-btn" type="button" data-detail-retry="${escapeAttribute(company.id)}">Retry</button>`
@@ -189,6 +193,13 @@ export function renderDetailPanel({
   const retryButton = container.querySelector("[data-detail-retry]");
   if (retryButton) {
     retryButton.addEventListener("click", () => onRetryScan(retryButton.getAttribute("data-detail-retry")));
+  }
+
+  const qualityButton = container.querySelector("[data-check-website-quality]");
+  if (qualityButton) {
+    qualityButton.addEventListener("click", () =>
+      onCheckWebsiteQuality(qualityButton.getAttribute("data-check-website-quality"))
+    );
   }
 
   const saveButton = container.querySelector("[data-save-company]");
@@ -299,11 +310,21 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
               <span>Last contacted: ${escapeHtml(company.last_contacted_at || "NA")}</span>
               <span>Next follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
               <span>Next action: ${escapeHtml(company.next_action || "NA")}</span>
+              <span>Website: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
+              <span>Quality: ${escapeHtml(company.websiteQualityStatus || "Not Checked")}${
+                Number(company.websiteQualityScore || 0) > 0 ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)` : ""
+              }</span>
+              ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>Booking: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
+              ${company.socialPlatform && company.socialPlatform !== "Unknown" ? `<span>Social: ${escapeHtml(company.socialPlatform)}</span>` : ""}
             `
             : `
               <span>${escapeHtml(company.websiteStatus || "Unknown")}</span>
+              <span>${escapeHtml(company.websiteQualityStatus || "Not Checked")}${
+                Number(company.websiteQualityScore || 0) > 0 ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)` : ""
+              }</span>
               <span>${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
               ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>${escapeHtml(company.bookingPlatform)}</span>` : ""}
+              ${company.socialPlatform && company.socialPlatform !== "Unknown" ? `<span>${escapeHtml(company.socialPlatform)}</span>` : ""}
               ${reasonChips}
             `
         }
@@ -361,8 +382,12 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
       <div class="company-grid-meta">
         <span>${escapeHtml(company.industry || "NA")}</span>
         <span>Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
+        <span>Website Quality: ${escapeHtml(company.websiteQualityStatus || "Not Checked")}${
+          Number(company.websiteQualityScore || 0) > 0 ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)` : ""
+        }</span>
         <span>Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
         ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
+        ${company.socialPlatform && company.socialPlatform !== "Unknown" ? `<span>Social Platform: ${escapeHtml(company.socialPlatform)}</span>` : ""}
         <span>Status: ${escapeHtml(getProspectStage(company))}</span>
         <span>Next Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
         <span>${escapeHtml(String(company.contacts_found || 0))} contacts</span>
@@ -509,12 +534,23 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         ${
           company.website
             ? `<a class="link" href="${escapeAttribute(company.website)}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(company.website))}</a>`
-            : "<strong>Has Website = No</strong>"
+            : "<strong>No Website</strong>"
         }
       </div>
       <div class="overview-card">
         <span class="overview-label">Website Status</span>
         <strong>${escapeHtml(company.websiteStatus || "Unknown")}</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Website Quality</span>
+        <strong>
+          ${escapeHtml(company.websiteQualityStatus || "Not Checked")}
+          ${
+            Number(company.websiteQualityScore || 0) > 0
+              ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)`
+              : ""
+          }
+        </strong>
       </div>
       <div class="overview-card">
         <span class="overview-label">Mobile App Status</span>
@@ -523,6 +559,14 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
       <div class="overview-card">
         <span class="overview-label">Booking Platform</span>
         <strong>${escapeHtml(company.bookingPlatform && company.bookingPlatform !== "Unknown" ? company.bookingPlatform : "NA")}</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Social Platform</span>
+        <strong>${escapeHtml(company.socialPlatform && company.socialPlatform !== "Unknown" ? company.socialPlatform : "NA")}</strong>
+      </div>
+      <div class="overview-card">
+        <span class="overview-label">Website Checked</span>
+        <strong>${escapeHtml(company.websiteCheckedAt ? formatDate(company.websiteCheckedAt) : "Not checked")}</strong>
       </div>
       <div class="overview-card">
         <span class="overview-label">Phone</span>
