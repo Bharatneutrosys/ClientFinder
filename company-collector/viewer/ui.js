@@ -21,6 +21,25 @@ const QUOTE_STATUSES = ["Not Started", "Quote Requested", "Drafting", "Sent", "U
 const FOLLOW_UP_PRIORITIES = ["Low", "Normal", "High"];
 const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received"]);
 const COMMUNICATION_METHODS = ["Call", "Email", "SMS", "WhatsApp", "Onsite Visit", "LinkedIn", "Other"];
+const ACTIVITY_TYPES = [
+  "Intro Email Sent",
+  "SMS/WhatsApp Copied",
+  "SMS/WhatsApp Sent",
+  "Message Sent",
+  "Call Attempted",
+  "Onsite Visit Done",
+  "Virtual Meeting Done",
+  "Client Responded",
+  "Requirements Discussed",
+  "Quote Requested",
+  "Quote Sent",
+  "Follow-Up Sent",
+  "Contract Sent",
+  "Contract Received",
+  "Advance Payment Received",
+  "Note Added",
+  "Status Changed",
+];
 const PROCESS_MILESTONES = [
   "Saved to prospects",
   "Initial intro email sent",
@@ -341,6 +360,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
             ? `
               <span>Last contacted: ${escapeHtml(company.last_contacted_at || "NA")}</span>
               <span>Next follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
+              <span>Follow-up status: ${escapeHtml(getFollowUpStatus(company.next_follow_up))}</span>
               <span>Next action: ${escapeHtml(company.next_action || "NA")}</span>
               <span>Website: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
               <span>Quality: ${escapeHtml(company.websiteQualityStatus || "Not Checked")}${
@@ -542,6 +562,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
       <section class="workflow-card">
         <p class="detail-section-title">Add Activity</p>
         <div class="workflow-form-grid">
+          <label class="inline-field"><span>Activity Type</span><select data-activity-type>${ACTIVITY_TYPES.map((type) => `<option value="${escapeAttribute(type)}">${escapeHtml(type)}</option>`).join("")}</select></label>
           <label class="inline-field"><span>Date</span><input type="date" value="${escapeAttribute(getTodayDateInput())}" data-communication-date /></label>
           <label class="inline-field"><span>Method</span><select data-communication-method>${COMMUNICATION_METHODS.map((method) => `<option value="${escapeAttribute(method)}">${escapeHtml(method)}</option>`).join("")}</select></label>
           <label class="inline-field"><span>Outcome/Status</span><input type="text" data-communication-outcome placeholder="Reached owner, left voicemail, replied" /></label>
@@ -551,7 +572,6 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
         <textarea class="workflow-textarea" data-communication-note-input rows="4" placeholder="Notes from the activity"></textarea>
         <div class="workflow-actions"><button class="primary-btn" type="button" data-add-communication-note="${escapeAttribute(company.id)}">Add Activity</button></div>
       </section>
-      ${renderCommunicationLog(company)}
       ${renderWorkflowActivityLog(company)}
     `;
   }
@@ -630,7 +650,7 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
       </div>
       <div class="overview-card">
         <span class="overview-label">Next follow-up</span>
-        <strong>${escapeHtml(company.next_follow_up || "Not scheduled")}</strong>
+        <strong>${escapeHtml(getFollowUpStatus(company.next_follow_up))}</strong>
       </div>
       <div class="overview-card">
         <span class="overview-label">Address</span>
@@ -1006,15 +1026,48 @@ function generateQuoteFollowUpTemplateLegacy(company, context = getOutreachConte
 }
 
 function renderWorkflowActivityLog(company) {
-  const entries = Array.isArray(company.activity_log) ? company.activity_log : [];
+  const activityEntries = Array.isArray(company.activity_log) ? company.activity_log : [];
+  const communicationEntries = Array.isArray(company.communication_logs) ? company.communication_logs : [];
+  const noteEntries = Array.isArray(company.notes)
+    ? company.notes.map((note) => ({
+        id: note.id || `note-${Date.now()}`,
+        created_at: note.created_at || "",
+        date: note.created_at || "",
+        activity_type: "Note Added",
+        method: "",
+        notes: note.text || "",
+        next_action: "",
+        next_follow_up: "",
+        source: "Manual",
+        action: "note-added",
+        message: note.text || "Added note",
+      }))
+    : [];
+
+  const entries = [...activityEntries, ...communicationEntries, ...noteEntries]
+    .map((entry) => ({
+      id: entry.id || `activity-${Date.now()}`,
+      created_at: entry.created_at || entry.date || "",
+      date: entry.date || entry.created_at || "",
+      activity_type: entry.activity_type || entry.activityType || entry.action || entry.message || "Status Changed",
+      method: entry.method || "",
+      notes: entry.notes || entry.message || "",
+      outcome: entry.outcome || "",
+      next_action: entry.next_action || "",
+      next_follow_up: entry.next_follow_up || "",
+      source: entry.source || "Manual",
+      action: entry.action || "update",
+      message: entry.message || entry.outcome || "Updated",
+    }))
+    .sort((left, right) => String(right.created_at || right.date || "").localeCompare(String(left.created_at || left.date || "")));
 
   if (!entries.length) {
-    return "";
+    return renderNaPanel("No activity entries saved yet.");
   }
 
   return `
     <section class="workflow-card">
-      <p class="detail-section-title">System Activity</p>
+      <p class="detail-section-title">Activity Timeline</p>
       <div class="activity-list">
         ${entries
           .map(
@@ -1022,8 +1075,14 @@ function renderWorkflowActivityLog(company) {
               <div class="activity-item">
                 <span class="activity-dot"></span>
                 <div>
-                  <p>${escapeHtml(formatDate(entry.created_at))} - ${escapeHtml(entry.source || "User")}</p>
-                  <strong>${escapeHtml(entry.message || "Updated")}</strong>
+                  <p>${escapeHtml(formatDate(entry.created_at || entry.date))} - ${escapeHtml(entry.source || "Manual")}</p>
+                  <strong>${escapeHtml(getActivityLabel(entry))}</strong>
+                  <p>
+                    ${entry.method && entry.method !== "Other" ? `<span class="detail-tag">${escapeHtml(entry.method)}</span>` : ""}
+                    ${entry.notes ? `<span>${escapeHtml(entry.notes)}</span>` : ""}
+                    ${entry.next_action ? `<span>Next: ${escapeHtml(entry.next_action)}</span>` : ""}
+                    ${entry.next_follow_up ? `<span>Follow-up: ${escapeHtml(entry.next_follow_up)}</span>` : ""}
+                  </p>
                 </div>
               </div>
             `
@@ -1032,6 +1091,44 @@ function renderWorkflowActivityLog(company) {
       </div>
     </section>
   `;
+}
+
+function getActivityLabel(entry) {
+  const normalized = String(entry?.activity_type || entry?.action || entry?.message || "Updated").trim();
+  if (entry?.source === "System" && /stage updated to/i.test(String(entry?.message || ""))) {
+    return String(entry.message);
+  }
+
+  const labels = {
+    "Intro Email Copied": "Intro Email Copied",
+    "Intro Email Sent": "Intro Email Sent",
+    "SMS/WhatsApp Copied": "SMS/WhatsApp Copied",
+    "SMS/WhatsApp Sent": "SMS/WhatsApp Sent",
+    "Message Sent": "Message Sent",
+    "Call Attempted": "Call Attempted",
+    "Onsite Visit Done": "Onsite Visit Done",
+    "Virtual Meeting Done": "Virtual Meeting Done",
+    "Client Responded": "Client Responded",
+    "Requirements Discussed": "Requirements Discussed",
+    "Quote Requested": "Quote Requested",
+    "Quote Sent": "Quote Sent",
+    "Follow-Up Sent": "Follow-Up Sent",
+    "Contract Sent": "Contract Sent",
+    "Contract Received": "Contract Received",
+    "Advance Payment Received": "Advance Payment Received",
+    "Note Added": "Note Added",
+    "Status Changed": "Status Changed",
+    save: "Saved",
+    hide: "Hidden",
+    archive: "Archived",
+    unarchive: "Unarchived",
+    Saved: "Saved",
+    Hidden: "Hidden",
+    Archived: "Archived",
+    Unarchived: "Unarchived",
+  };
+
+  return labels[normalized] || titleCase(normalized);
 }
 
 function renderProspectNotes(company) {
@@ -1218,6 +1315,7 @@ function readContactPayload(button) {
 function readCommunicationPayload(container, companyId) {
   return {
     companyId,
+    activityType: container.querySelector("[data-activity-type]")?.value || "",
     date: container.querySelector("[data-communication-date]")?.value || "",
     method: container.querySelector("[data-communication-method]")?.value || "Other",
     outcome: container.querySelector("[data-communication-outcome]")?.value || "",
@@ -1402,7 +1500,7 @@ function getSuggestedNextAction(company) {
 function getFollowUpStatus(dateValue) {
   const dateKey = String(dateValue || "").slice(0, 10);
   if (!dateKey) {
-    return "Not scheduled";
+    return "No Follow-Up Set";
   }
 
   const today = getTodayDateInput();
@@ -1411,7 +1509,12 @@ function getFollowUpStatus(dateValue) {
   }
 
   if (dateKey === today) {
-    return "Due today";
+    return "Due Today";
+  }
+
+  const diffDays = Math.round((new Date(`${dateKey}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86400000);
+  if (diffDays >= 1 && diffDays <= 7) {
+    return "Upcoming This Week";
   }
 
   return "Upcoming";

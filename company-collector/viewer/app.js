@@ -1495,6 +1495,7 @@ function updateProspectStatus(companyId, nextStatus) {
   };
   persistProspectWorkflows();
   applyProspectWorkflow(company);
+  recordProspectActivity(company.id, `Status changed to ${nextStatus}`, "Manual", "status-change");
   elements.statusMessage.textContent = `Updated ${company.name || "prospect"} status to ${nextStatus}.`;
   updateSummary();
   applyFilters();
@@ -1505,7 +1506,14 @@ function addCommunicationEntry(payload) {
   const notes = String(payload.notes || "").trim();
   const outcome = String(payload.outcome || "").trim();
   const nextAction = String(payload.nextAction || "").trim();
-  if (!company || (!notes && !outcome && !nextAction)) {
+  const method = String(payload.method || "Other").trim();
+  const activityType = normalizeActivityType(
+    payload.activityType || payload.type || mapMethodToActivityType(method) || "Status Changed"
+  );
+  const hasMeaningfulInput = Boolean(
+    notes || outcome || nextAction || String(payload.activityType || payload.type || "").trim()
+  );
+  if (!company || !hasMeaningfulInput) {
     elements.statusMessage.textContent = "Enter communication details before saving.";
     return;
   }
@@ -1516,10 +1524,28 @@ function addCommunicationEntry(payload) {
     ? workflow.communication_logs
     : [];
   const date = payload.date || getTodayDateKey();
-  const nextFollowUp = String(payload.nextFollowUp || "").trim();
+  const nextFollowUp = String(payload.nextFollowUp || getSuggestedFollowUpDate(activityType, date, outcome) || "").trim();
+  const now = new Date().toISOString();
+  const activityEntry = {
+    id: `activity-${Date.now()}`,
+    created_at: now,
+    date,
+    activity_type: activityType,
+    method,
+    outcome,
+    notes,
+    next_action: nextAction,
+    next_follow_up: nextFollowUp,
+    source: "Manual",
+    action: `activity-${normalizeText(activityType)}`,
+    message: `${activityType}${outcome ? ` - ${outcome}` : ""}`.trim(),
+  };
+  const activity_log = appendWorkflowActivity(workflow.activity_log, activityEntry);
+  const milestone = mapActivityToMilestone(activityType);
 
   state.prospectWorkflows[company.id] = {
     ...workflow,
+    activity_log,
     communication_logs: [
       {
         id: `communication-${Date.now()}`,
@@ -1529,17 +1555,22 @@ function addCommunicationEntry(payload) {
         notes,
         next_action: nextAction,
         next_follow_up: nextFollowUp,
-        created_at: new Date().toISOString(),
+        created_at: now,
+        activity_type: activityType,
       },
       ...communicationLogs,
     ].slice(0, 25),
     last_contacted_at: date,
     next_action: nextAction || workflow.next_action || "",
     next_follow_up: nextFollowUp || workflow.next_follow_up || "",
-    updated_at: new Date().toISOString(),
+    updated_at: now,
+    lastUpdatedAt: now,
   };
   persistProspectWorkflows();
   applyProspectWorkflow(company);
+  if (milestone) {
+    toggleMilestone(company.id, milestone, true);
+  }
   elements.statusMessage.textContent = `Added communication entry for ${company.name || "prospect"}.`;
   renderDetail();
   renderTodayFollowups();
@@ -1572,6 +1603,7 @@ function addProspectNote(companyId, noteText) {
   };
   persistProspectWorkflows();
   applyProspectWorkflow(company);
+  recordProspectActivity(company.id, `Added note: ${text.slice(0, 80)}`, "Manual", "note-added");
   elements.statusMessage.textContent = `Added note for ${company.name || "prospect"}.`;
   renderDetail();
   updateSummary();
@@ -1606,6 +1638,14 @@ function setNextFollowUp(companyId, followUpDetails) {
   };
   persistProspectWorkflows();
   applyProspectWorkflow(company);
+  if (nextFollowUpDate || nextAction || lastContacted || quoteStatus) {
+    recordProspectActivity(
+      company.id,
+      nextFollowUpDate ? `Updated follow-up to ${nextFollowUpDate}` : "Updated follow-up plan",
+      "Manual",
+      "follow-up-update"
+    );
+  }
   elements.statusMessage.textContent = nextFollowUpDate
     ? `Set next follow-up for ${company.name || "prospect"} to ${nextFollowUpDate}.`
     : `Cleared next follow-up for ${company.name || "prospect"}.`;
@@ -1978,6 +2018,15 @@ function renderTodayFollowups() {
           <span>
             <strong>${escapeHtml(company.name || "NA")}</strong>
             <small>${escapeHtml(company.phone || "No phone")} - ${escapeHtml(company.prospect_stage || "New Lead")} - ${escapeHtml(company.follow_up_priority || "Normal")}</small>
+            <small>Follow-up status: ${escapeHtml(
+              getFollowUpState(company.next_follow_up) === "none"
+                ? "No Follow-Up Set"
+                : getFollowUpState(company.next_follow_up) === "overdue"
+                  ? "Overdue"
+                  : getFollowUpState(company.next_follow_up) === "due_today"
+                    ? "Due Today"
+                    : "Upcoming This Week"
+            )}</small>
             <small>${escapeHtml(company.next_action || "No next action set")}</small>
           </span>
           <span>${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
@@ -2562,6 +2611,23 @@ function applyProspectWorkflow(company) {
   const notes = Array.isArray(workflow.notes) ? workflow.notes : [];
   const allCommunicationLogs = communicationLogs.length ? communicationLogs : legacyCommunicationNotes;
   const lastCommunication = allCommunicationLogs[0] || null;
+  const activityLog = Array.isArray(workflow.activity_log)
+    ? workflow.activity_log
+    : allCommunicationLogs.length
+      ? allCommunicationLogs.map((entry) => ({
+          id: entry.id || `activity-${Date.now()}`,
+          created_at: entry.created_at || entry.date || "",
+          date: entry.date || normalizeDateKey(entry.created_at) || "",
+          activity_type: normalizeActivityType(entry.activity_type || entry.action || entry.method || entry.message || "Update"),
+          method: entry.method || "Other",
+          notes: entry.notes || entry.message || "",
+          next_action: entry.next_action || "",
+          next_follow_up: entry.next_follow_up || "",
+          source: entry.source || "Manual",
+          action: entry.action || "update",
+          message: entry.message || entry.outcome || "Updated",
+        }))
+      : [];
 
   Object.assign(company, {
     prospect_stage: normalizeProspectStage(
@@ -2587,7 +2653,7 @@ function applyProspectWorkflow(company) {
     websiteCheckStatus: workflow.websiteCheckStatus || company.websiteCheckStatus || "Not Checked",
     websiteCheckedAt: workflow.websiteCheckedAt || company.websiteCheckedAt || "",
     communication_logs: allCommunicationLogs,
-    activity_log: Array.isArray(workflow.activity_log) ? workflow.activity_log : Array.isArray(company.activity_log) ? company.activity_log : [],
+    activity_log: activityLog.length ? activityLog : Array.isArray(company.activity_log) ? company.activity_log : [],
     notes,
     milestones: workflow.milestones || {},
     latest_communication_note: lastCommunication?.notes || "",
@@ -2893,6 +2959,193 @@ function recordProspectActivity(companyId, message, source = "User", action = "u
   persistProspectWorkflows();
 }
 
+function normalizeActivityType(value) {
+  const label = String(value || "").trim();
+  if (!label) {
+    return "Status Changed";
+  }
+
+  const match = {
+    "intro email copied": "Intro Email Copied",
+    "intro email sent": "Intro Email Sent",
+    "sms/whatsapp copied": "SMS/WhatsApp Copied",
+    "sms whatsapp copied": "SMS/WhatsApp Copied",
+    "sms/whatsapp": "SMS/WhatsApp Copied",
+    "sms whatsapp sent": "SMS/WhatsApp Sent",
+    "message sent": "Message Sent",
+    "call attempted": "Call Attempted",
+    "onsite visit done": "Onsite Visit Done",
+    "virtual meeting done": "Virtual Meeting Done",
+    "client responded": "Client Responded",
+    "requirements discussed": "Requirements Discussed",
+    "quote requested": "Quote Requested",
+    "quote sent": "Quote Sent",
+    "follow-up sent": "Follow-Up Sent",
+    "follow up sent": "Follow-Up Sent",
+    "contract sent": "Contract Sent",
+    "contract received": "Contract Received",
+    "advance payment received": "Advance Payment Received",
+    "note added": "Note Added",
+    "status changed": "Status Changed",
+    saved: "Saved",
+    hidden: "Hidden",
+    archived: "Archived",
+    unarchived: "Unarchived",
+  }[normalizeText(label)];
+
+  return match || titleCase(label);
+}
+
+function mapMethodToActivityType(method) {
+  const normalized = normalizeText(method);
+  if (!normalized) {
+    return "Status Changed";
+  }
+
+  if (normalized.includes("call")) {
+    return "Call Attempted";
+  }
+  if (normalized.includes("email")) {
+    return "Intro Email Sent";
+  }
+  if (normalized.includes("sms") || normalized.includes("whatsapp") || normalized.includes("message")) {
+    return "Message Sent";
+  }
+  if (normalized.includes("onsite")) {
+    return "Onsite Visit Done";
+  }
+  if (normalized.includes("virtual") || normalized.includes("meeting")) {
+    return "Virtual Meeting Done";
+  }
+
+  return "Status Changed";
+}
+
+function mapActivityToMilestone(activityType) {
+  const normalized = normalizeActivityType(activityType);
+  const map = {
+    "Intro Email Sent": "Initial intro email sent",
+    "Call Attempted": "Call attempted",
+    "SMS/WhatsApp Copied": "",
+    "SMS/WhatsApp Sent": "WhatsApp/message sent",
+    "Message Sent": "WhatsApp/message sent",
+    "Onsite Visit Done": "Onsite visit done",
+    "Virtual Meeting Done": "Virtual meeting done",
+    "Client Responded": "Client responded",
+    "Requirements Discussed": "Requirements discussed",
+    "Quote Requested": "Quote requested",
+    "Quote Sent": "Quote sent",
+    "Follow-Up Sent": "Follow-up sent",
+    "Contract Sent": "Contract sent",
+    "Contract Received": "Contract received",
+    "Advance Payment Received": "Advance payment received",
+    Saved: "Saved to prospects",
+  };
+
+  return map[normalized] || "";
+}
+
+function getSuggestedFollowUpDate(activityType, dateValue = getTodayDateKey(), outcome = "") {
+  const baseKey = normalizeDateKey(dateValue) || getTodayDateKey();
+  const baseDate = new Date(`${baseKey}T00:00:00`);
+  const normalized = normalizeActivityType(activityType);
+  const noResponse = /no response|no answer|voicemail|left message|left voicemail/i.test(String(outcome || ""));
+  const offsets = {
+    "Intro Email Sent": 3,
+    "Message Sent": 2,
+    "Follow-Up Sent": 2,
+    "Quote Sent": 2,
+    "Call Attempted": noResponse ? 1 : 0,
+    "Virtual Meeting Done": 1,
+    "Onsite Visit Done": 1,
+    "Client Responded": 1,
+  };
+  const days = offsets[normalized] || 0;
+  if (!days) {
+    return "";
+  }
+
+  baseDate.setDate(baseDate.getDate() + days);
+  return baseDate.toISOString().slice(0, 10);
+}
+
+function addActivityEntry(companyId, payload = {}) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(companyId);
+  const now = new Date().toISOString();
+  const date = String(payload.date || getTodayDateKey()).trim();
+  const activityType = normalizeActivityType(payload.activityType || payload.type || payload.action || "Status Changed");
+  const method = String(payload.method || "Other").trim();
+  const notes = String(payload.notes || "").trim();
+  const nextAction = String(payload.nextAction || payload.next_action || "").trim();
+  const suggestedFollowUp = getSuggestedFollowUpDate(activityType, date, payload.outcome || notes);
+  const nextFollowUp = String(payload.nextFollowUp || payload.next_follow_up || suggestedFollowUp || "").trim();
+  const message = String(
+    payload.message ||
+      notes ||
+      payload.outcome ||
+      `${activityType}${method ? ` via ${method}` : ""}`
+  ).trim();
+  const activityEntry = {
+    id: `activity-${Date.now()}`,
+    created_at: now,
+    date,
+    activity_type: activityType,
+    method,
+    notes,
+    next_action: nextAction,
+    next_follow_up: nextFollowUp,
+    source: payload.source || "Manual",
+    action: payload.action || normalizeText(activityType),
+    message,
+  };
+  const activity_log = appendWorkflowActivity(workflow.activity_log, activityEntry);
+  const communicationLogs = Array.isArray(workflow.communication_logs) ? workflow.communication_logs : [];
+  const nextMilestone = mapActivityToMilestone(activityType);
+
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    activity_log,
+    communication_logs:
+      notes || payload.outcome || method !== "Other"
+        ? [
+            {
+              id: `communication-${Date.now()}`,
+              date,
+              method,
+              outcome: String(payload.outcome || "").trim(),
+              notes,
+              next_action: nextAction,
+              next_follow_up: nextFollowUp,
+              created_at: now,
+              activity_type: activityType,
+            },
+            ...communicationLogs,
+          ].slice(0, 25)
+        : communicationLogs,
+    last_contacted_at: date || workflow.last_contacted_at || "",
+    next_action: nextAction || workflow.next_action || "",
+    next_follow_up: nextFollowUp || workflow.next_follow_up || "",
+    updated_at: now,
+    lastUpdatedAt: now,
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+
+  if (nextMilestone) {
+    toggleMilestone(companyId, nextMilestone, true);
+  }
+}
+
+function updateProspectFromActivity(companyId, payload = {}) {
+  addActivityEntry(companyId, payload);
+}
+
 function ensureSavedProspect(company) {
   if (!company?.id) {
     return;
@@ -2973,6 +3226,10 @@ function getFollowUpState(dateValue) {
 
 function matchesSavedFollowUpFilter(dateValue, filterValue) {
   const stateValue = getFollowUpState(dateValue);
+  if (["none", "no_follow_up", "no_followup", "no follow-up set"].includes(String(filterValue || "").toLowerCase())) {
+    return stateValue === "none";
+  }
+
   if (filterValue === "upcoming_week") {
     return isUpcomingThisWeek(dateValue);
   }
