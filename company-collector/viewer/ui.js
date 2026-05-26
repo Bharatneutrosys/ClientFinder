@@ -96,6 +96,8 @@ export function renderDetailPanel({
   onSetNextFollowUp,
   onToggleMilestone,
   onCheckWebsiteQuality,
+  onCopyOutreachTemplate,
+  onMarkOutreachMilestone,
   onApproveContact,
   onMarkBadContact,
   onCopyContactEmail,
@@ -116,7 +118,7 @@ export function renderDetailPanel({
   const primaryContact = company.primary_contact || null;
   const otherContacts = contacts.filter((contact) => !isSameContact(contact, primaryContact));
   const isSaved = Array.isArray(savedCompanies) && savedCompanies.includes(company.id);
-  const availableTabs = ["overview", "contact", "activity", "process", "notes", "quote"];
+  const availableTabs = ["overview", "contact", "outreach", "activity", "process", "notes", "quote"];
   const selectedTab = availableTabs.includes(activeTab) ? activeTab : "overview";
   const statusMeta = getScanStatusMeta(company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = company.scan_failure_reason || "";
@@ -203,6 +205,31 @@ export function renderDetailPanel({
       onCheckWebsiteQuality(qualityButton.getAttribute("data-check-website-quality"))
     );
   }
+
+  container.querySelectorAll("[data-outreach-copy]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const card = button.closest("[data-outreach-card]");
+      const templateBody = card?.querySelector("[data-outreach-body]");
+      const templateLabel = button.getAttribute("data-outreach-label") || "Template";
+      const templateKey = button.getAttribute("data-outreach-copy") || templateLabel;
+      onCopyOutreachTemplate(
+        button.getAttribute("data-company-id"),
+        templateKey,
+        templateLabel,
+        templateBody?.value || templateBody?.textContent || ""
+      );
+    });
+  });
+
+  container.querySelectorAll("[data-outreach-mark]").forEach((button) => {
+    button.addEventListener("click", () => {
+      onMarkOutreachMilestone(
+        button.getAttribute("data-company-id"),
+        button.getAttribute("data-outreach-mark"),
+        button.getAttribute("data-outreach-message") || ""
+      );
+    });
+  });
 
   const saveButton = container.querySelector("[data-save-company]");
   if (saveButton) {
@@ -440,6 +467,73 @@ function renderTabContent({ company, primaryContact, otherContacts, activeTab })
             : renderNaPanel("No public contacts found yet.")
         }
       </div>
+    `;
+  }
+
+  if (activeTab === "outreach") {
+    const outreachContext = getOutreachContext(company);
+    return `
+      <section class="workflow-card">
+        <p class="detail-section-title">Outreach Context</p>
+        <div class="reason-chip-row">
+          ${outreachContext.chips.map((chip) => `<span class="reason-chip">${escapeHtml(chip)}</span>`).join("")}
+        </div>
+        <p class="toolbar-subtle">${escapeHtml(outreachContext.summary)}</p>
+      </section>
+      ${renderOutreachTemplateCard({
+        company,
+        templateKey: "intro_email",
+        label: "Intro Email",
+        text: generateIntroEmail(company, outreachContext),
+        markLabel: "Mark intro email sent",
+        milestone: "Initial intro email sent",
+        actionMessage: "Marked intro email sent",
+      })}
+      ${renderOutreachTemplateCard({
+        company,
+        templateKey: "sms_message",
+        label: "SMS / WhatsApp",
+        text: generateSmsTemplate(company, outreachContext),
+        markLabel: "Mark message sent",
+        milestone: "WhatsApp/message sent",
+        actionMessage: "Marked message sent",
+      })}
+      ${renderOutreachTemplateCard({
+        company,
+        templateKey: "call_script",
+        label: "Phone Call Script",
+        text: generateCallScript(company, outreachContext),
+        markLabel: "Mark call attempted",
+        milestone: "Call attempted",
+        actionMessage: "Marked call attempted",
+      })}
+      ${renderOutreachTemplateCard({
+        company,
+        templateKey: "onsite_visit",
+        label: "Onsite Visit Script",
+        text: generateOnsiteVisitScript(company, outreachContext),
+        markLabel: "Mark onsite visit done",
+        milestone: "Onsite visit done",
+        actionMessage: "Marked onsite visit done",
+      })}
+      ${renderOutreachTemplateCard({
+        company,
+        templateKey: "follow_up",
+        label: "Follow-Up Message",
+        text: generateFollowUpTemplate(company, outreachContext),
+        markLabel: "Mark follow-up sent",
+        milestone: "Follow-up sent",
+        actionMessage: "Marked follow-up sent",
+      })}
+      ${renderOutreachTemplateCard({
+        company,
+        templateKey: "quote_follow_up",
+        label: "Quote Follow-Up",
+        text: generateQuoteFollowUpTemplate(company, outreachContext),
+        markLabel: "Mark follow-up sent",
+        milestone: "Follow-up sent",
+        actionMessage: "Marked quote follow-up sent",
+      })}
     `;
   }
 
@@ -724,6 +818,191 @@ function renderCommunicationLog(company) {
       </div>
     </section>
   `;
+}
+
+function renderOutreachTemplateCard({ company, templateKey, label, text, markLabel, milestone, actionMessage }) {
+  return `
+    <section class="workflow-card" data-outreach-card="${escapeAttribute(templateKey)}">
+      <div class="workflow-header-row">
+        <p class="detail-section-title">${escapeHtml(label)}</p>
+        <div class="workflow-actions">
+          <button
+            class="secondary-btn"
+            type="button"
+            data-outreach-copy="${escapeAttribute(templateKey)}"
+            data-outreach-label="${escapeAttribute(label)}"
+            data-company-id="${escapeAttribute(company.id)}"
+          >
+            Copy
+          </button>
+          <button
+            class="secondary-btn"
+            type="button"
+            data-outreach-mark="${escapeAttribute(milestone)}"
+            data-outreach-message="${escapeAttribute(actionMessage)}"
+            data-company-id="${escapeAttribute(company.id)}"
+          >
+            ${escapeHtml(markLabel)}
+          </button>
+        </div>
+      </div>
+      <textarea class="workflow-textarea outreach-template" readonly data-outreach-body rows="8">${escapeHtml(text)}</textarea>
+    </section>
+  `;
+}
+
+function getOutreachContextLegacy(company) {
+  const businessName = company.name || company.businessName || "this business";
+  const businessType = company.industry || company.keyword || company.businessType || "local business";
+  const location = [company.city || company.location || "", company.state || ""].filter(Boolean).join(", ") || "your area";
+  const websiteStatus = String(company.websiteStatus || company.website_status || "Unknown").trim();
+  const websiteQualityStatus = String(company.websiteQualityStatus || company.website_quality_status || "Not Checked").trim();
+  const bookingPlatform = String(company.bookingPlatform || company.booking_platform || "Unknown").trim();
+  const socialPlatform = String(company.socialPlatform || company.social_platform || "Unknown").trim();
+  const priority = String(company.opportunityPriority || company.opportunity_priority || company.lead_label || "Needs Review").trim();
+  const websiteQualityScore = company.websiteQualityScore ?? company.website_quality_score ?? null;
+
+  const chips = [priority];
+  if (websiteStatus !== "Unknown") chips.push(websiteStatus);
+  if (websiteQualityStatus && websiteQualityStatus !== "Not Checked") chips.push(websiteQualityStatus);
+  if (bookingPlatform && bookingPlatform !== "Unknown") chips.push(`Booking: ${bookingPlatform}`);
+  if (socialPlatform && socialPlatform !== "Unknown") chips.push(`Social: ${socialPlatform}`);
+
+  const presenceNote =
+    websiteStatus === "No Website"
+      ? "I did not find a dedicated website."
+      : websiteStatus === "Social Only"
+      ? "I only found social profiles, so a dedicated website could build more trust."
+      : websiteStatus === "Booking Link Only"
+      ? "I found a booking presence, but not a full owned website."
+      : websiteStatus === "Broken Website"
+      ? "The website looks broken or unusable right now."
+      : websiteStatus === "Has Website"
+      ? "You already have a website, but there may still be room to improve how it converts visitors."
+      : "I wanted to reach out because your online presence looks worth a closer look.";
+
+  const qualityNote =
+    websiteQualityStatus === "Weak Website" || websiteQualityStatus === "Needs Review"
+      ? "There is room to improve the site for mobile visitors, services, and booking conversion."
+      : websiteQualityStatus === "Broken Website"
+      ? "The current website appears to have issues, so a cleaner web presence could help."
+      : websiteQualityStatus === "Strong Website"
+      ? "The website looks solid, so the outreach can focus on refinements and conversion."
+      : "";
+
+  const platformNote =
+    bookingPlatform && bookingPlatform !== "Unknown"
+      ? `I noticed ${bookingPlatform} in the mix${socialPlatform && socialPlatform !== "Unknown" ? `, along with ${socialPlatform}` : ""}.`
+      : socialPlatform && socialPlatform !== "Unknown"
+      ? `I noticed ${socialPlatform} as the main online presence.`
+      : "";
+
+  const summary = [presenceNote, qualityNote, platformNote].filter(Boolean).join(" ");
+  const hook = summary || `I’m reaching out to ${businessName} in ${location}.`;
+  const valueLine =
+    priority === "Best Prospect" || priority === "Strong Prospect"
+      ? "You may be a good fit for a quick conversation about simple website improvements that can help bring in more inquiries."
+      : "I think there may be an opportunity to improve how your business is presented online.";
+  const askLine = location
+    ? `If you're open to it, I'd be happy to share a couple quick ideas for ${String(businessType).toLowerCase()} businesses in ${location}.`
+    : `If you're open to it, I'd be happy to share a couple quick ideas for ${String(businessType).toLowerCase()} businesses.`;
+  const followUpLine =
+    websiteQualityScore != null ? `I also took a quick look at the current site and noted a score of ${websiteQualityScore}/100.` : "";
+
+  return {
+    businessName,
+    businessType,
+    location,
+    websiteStatus,
+    websiteQualityStatus,
+    websiteQualityScore,
+    bookingPlatform,
+    socialPlatform,
+    priority,
+    summary,
+    chips,
+    hook,
+    valueLine,
+    askLine,
+    followUpLine,
+  };
+}
+
+function generateIntroEmailLegacy(company, context = getOutreachContext(company)) {
+  return [
+    `Hi${context.businessName ? ` ${context.businessName}` : ""},`,
+    "",
+    `I work with local ${String(context.businessType).toLowerCase()} businesses and wanted to reach out because ${context.hook.toLowerCase()}`,
+    context.valueLine,
+    context.followUpLine,
+    "",
+    context.askLine,
+    "",
+    "Best,",
+    "Cody",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function generateSmsTemplateLegacy(company, context = getOutreachContext(company)) {
+  const leadIn =
+    context.websiteStatus === "No Website"
+      ? "I did not find a dedicated website"
+      : context.websiteStatus === "Social Only"
+      ? "I found social pages, but not a dedicated website"
+      : context.websiteStatus === "Booking Link Only"
+      ? "I found a booking presence, but not a full website"
+      : context.websiteStatus === "Broken Website"
+      ? "your current website looks like it may need attention"
+      : "I took a quick look at your online presence";
+  return `Hi${context.businessName ? ` ${context.businessName}` : ""} - I work with local ${String(context.businessType).toLowerCase()} businesses. ${leadIn}. ${context.valueLine} Open to a quick chat this week?`;
+}
+
+function generateCallScriptLegacy(company, context = getOutreachContext(company)) {
+  return [
+    `Hi, this is Cody. Am I speaking with the owner or manager at ${context.businessName}?`,
+    "",
+    `I work with local ${String(context.businessType).toLowerCase()} businesses, and I reached out because ${context.hook.toLowerCase()}`,
+    context.valueLine,
+    "",
+    "I only need a minute - would you be open to hearing a couple quick ideas?",
+    "",
+    "If yes, the next step would be a short follow-up conversation.",
+  ].join("\n");
+}
+
+function generateOnsiteVisitScriptLegacy(company, context = getOutreachContext(company)) {
+  return [
+    `Hi, I’m Cody. I’m visiting a few ${String(context.businessType).toLowerCase()} businesses${context.location ? ` in ${context.location}` : ""}.`,
+    "",
+    `I wanted to stop by because ${context.hook.toLowerCase()}`,
+    context.valueLine,
+    "",
+    "Is the owner or manager available for a quick conversation?",
+  ].join("\n");
+}
+
+function generateFollowUpTemplateLegacy(company, context = getOutreachContext(company)) {
+  return [
+    `Hi${context.businessName ? ` ${context.businessName}` : ""},`,
+    "",
+    "Just following up on my last note.",
+    context.valueLine,
+    context.askLine,
+    "",
+    "If now is not the right time, no problem - happy to reconnect later.",
+  ].join("\n");
+}
+
+function generateQuoteFollowUpTemplateLegacy(company, context = getOutreachContext(company)) {
+  return [
+    `Hi${context.businessName ? ` ${context.businessName}` : ""},`,
+    "",
+    "I wanted to check in on the quote I shared.",
+    "If you have any questions or want me to adjust anything, I'm happy to help.",
+    "If it makes sense, we can also talk through next steps briefly.",
+  ].join("\n");
 }
 
 function renderWorkflowActivityLog(company) {
@@ -1249,4 +1528,140 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value);
+}
+function getOutreachContext(company) {
+  const businessName = company?.business_name || company?.businessName || "your business";
+  const businessType = company?.business_type || company?.businessType || "business";
+  const city = company?.city || company?.location || "";
+  const state = company?.state || "";
+  const location = [city, state].filter(Boolean).join(", ");
+  const websiteStatus = company?.website_status || company?.websiteStatus || "Unknown";
+  const websiteQualityStatus = company?.website_quality_status || company?.websiteQualityStatus || "Not Checked";
+  const bookingPlatform = company?.booking_platform || company?.bookingPlatform || "";
+  const socialPlatform = company?.social_platform || company?.socialPlatform || "";
+  const opportunityPriority = company?.opportunity_priority || company?.opportunityPriority || "Needs Review";
+  const websiteQualityScore = company?.website_quality_score ?? company?.websiteQualityScore ?? null;
+  const siteQualityNote =
+    websiteQualityStatus === "Weak Website" || websiteQualityStatus === "Needs Review"
+      ? "There is room to improve the site for mobile visitors, services, and booking conversion."
+      : websiteQualityStatus === "Broken Website"
+      ? "The current website appears to have issues, so a cleaner web presence could help."
+      : websiteQualityStatus === "Strong Website"
+      ? "The website looks solid, so the outreach can focus on refinements and conversion."
+      : "";
+  const presenceNote =
+    websiteStatus === "No Website"
+      ? "I did not find a dedicated website."
+      : websiteStatus === "Social Only"
+      ? "I only found social profiles, so a dedicated website could build more trust."
+      : websiteStatus === "Booking Link Only"
+      ? "I found a booking presence, but not a full owned website."
+      : websiteStatus === "Broken Website"
+      ? "The website looks broken or unusable right now."
+      : websiteStatus === "Has Website"
+      ? "You already have a website, but there may still be room to improve how it converts visitors."
+      : "I wanted to reach out because your online presence looks worth a closer look.";
+  const platformNote =
+    bookingPlatform && bookingPlatform !== "Unknown"
+      ? `I noticed ${bookingPlatform} in the mix${socialPlatform && socialPlatform !== "Unknown" ? `, along with ${socialPlatform}` : ""}.`
+      : socialPlatform && socialPlatform !== "Unknown"
+      ? `I noticed ${socialPlatform} as the main online presence.`
+      : "";
+  const valueLine =
+    opportunityPriority === "Best Prospect" || opportunityPriority === "Strong Prospect"
+      ? "You may be a good fit for a quick conversation about simple website improvements that can help bring in more inquiries."
+      : "I think there may be an opportunity to improve how your business is presented online.";
+  const hook = [presenceNote, siteQualityNote, platformNote].filter(Boolean).join(" ");
+  const askLine = location
+    ? `If you're open to it, I'd be happy to share a couple quick ideas for ${businessType.toLowerCase()} businesses in ${location}.`
+    : `If you're open to it, I'd be happy to share a couple quick ideas for ${businessType.toLowerCase()} businesses.`;
+  const followUpLine =
+    websiteQualityScore != null
+      ? `I also took a quick look at the current site and noted a score of ${websiteQualityScore}/100.`
+      : "";
+
+  return {
+    businessName,
+    businessType,
+    location,
+    websiteStatus,
+    websiteQualityStatus,
+    websiteQualityScore,
+    bookingPlatform,
+    socialPlatform,
+    opportunityPriority,
+    hook,
+    valueLine,
+    askLine,
+    followUpLine,
+  };
+}
+
+function generateIntroEmail(company, context = getOutreachContext(company)) {
+  const line1 = `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""},`;
+  const line2 = `I work with local ${context.businessType.toLowerCase()} businesses and wanted to reach out because ${context.hook.toLowerCase()}`;
+  const line3 = context.valueLine;
+  const line4 = `${context.askLine}`;
+  return [line1, "", line2, line3, line4, "", "Best,", "Cody"].join("\n");
+}
+
+function generateSmsTemplate(company, context = getOutreachContext(company)) {
+  const leadIn =
+    context.websiteStatus === "No Website"
+      ? "I did not find a dedicated website"
+      : context.websiteStatus === "Social Only"
+      ? "I found social pages, but not a dedicated website"
+      : context.websiteStatus === "Booking Link Only"
+      ? "I found a booking presence, but not a full website"
+      : context.websiteStatus === "Broken Website"
+      ? "your current website looks like it may need attention"
+      : "I took a quick look at your online presence";
+  return `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""} - I work with local ${context.businessType.toLowerCase()} businesses. ${leadIn}. ${context.valueLine} Open to a quick chat this week?`;
+}
+
+function generateCallScript(company, context = getOutreachContext(company)) {
+  return [
+    `Hi, this is Cody. Am I speaking with the owner or manager at ${context.businessName}?`,
+    "",
+    `I work with local ${context.businessType.toLowerCase()} businesses, and I reached out because ${context.hook.toLowerCase()}`,
+    context.valueLine,
+    "",
+    "I only need a minute - would you be open to hearing a couple quick ideas?",
+    "",
+    "If yes, the next step would be a short follow-up conversation."
+  ].join("\n");
+}
+
+function generateOnsiteVisitScript(company, context = getOutreachContext(company)) {
+  const locationLine = context.location ? `for ${context.location}` : "for your area";
+  return [
+    `Hi, I'm Cody. I'm visiting a few ${context.businessType.toLowerCase()} businesses ${locationLine}.`,
+    "",
+    `I wanted to stop by because ${context.hook.toLowerCase()}`,
+    context.valueLine,
+    "",
+    "Is the owner or manager available for a quick conversation?",
+  ].join("\n");
+}
+
+function generateFollowUpTemplate(company, context = getOutreachContext(company)) {
+  return [
+    `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""},`,
+    "",
+    "Just following up on my last note.",
+    context.valueLine,
+    context.askLine,
+    "",
+    "If now is not the right time, no problem - happy to reconnect later.",
+  ].join("\n");
+}
+
+function generateQuoteFollowUpTemplate(company, context = getOutreachContext(company)) {
+  return [
+    `Hi${context.businessName && context.businessName !== "your business" ? ` ${context.businessName}` : ""},`,
+    "",
+    "I wanted to check in on the quote I shared.",
+    "If you have any questions or want me to adjust anything, I'm happy to help.",
+    "If it makes sense, we can also talk through next steps briefly.",
+  ].join("\n");
 }

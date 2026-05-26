@@ -1336,6 +1336,8 @@ function renderDetail() {
     onSetNextFollowUp: setNextFollowUp,
     onToggleMilestone: toggleMilestone,
     onCheckWebsiteQuality: checkWebsiteQuality,
+    onCopyOutreachTemplate: copyOutreachTemplate,
+    onMarkOutreachMilestone: markOutreachMilestone,
     onApproveContact: (payload) => handleReviewUpdate(payload, "approved"),
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
     onCopyContactEmail: (payload) => copyToClipboard(payload.email, "Email copied."),
@@ -1441,6 +1443,35 @@ function hideCompany(companyId) {
     }
   }
   applyFilters();
+}
+
+async function copyOutreachTemplate(companyId, templateKey, templateLabel, templateText) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!templateText) {
+    return;
+  }
+
+  await copyToClipboard(templateText, `${templateLabel} copied.`);
+
+  if (company && findSavedProspectId(company)) {
+    recordProspectActivity(company.id, `Copied ${templateLabel}`, "User", `copy-${normalizeText(templateKey)}`);
+  } else if (company) {
+    elements.statusMessage.textContent = `${templateLabel} copied. Save the prospect to keep outreach activity.`;
+  }
+}
+
+function markOutreachMilestone(companyId, milestone, message) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company || !milestone) {
+    return;
+  }
+
+  const workflow = getProspectWorkflow(companyId);
+  const alreadyComplete = Boolean(workflow.milestones && workflow.milestones[milestone]);
+  toggleMilestone(companyId, milestone, true);
+  if (!alreadyComplete && company && findSavedProspectId(company)) {
+    recordProspectActivity(company.id, message || `Marked ${milestone}`, "User", `mark-${normalizeText(milestone)}`);
+  }
 }
 
 function updateProspectStatus(companyId, nextStatus) {
