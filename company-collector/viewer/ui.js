@@ -18,6 +18,17 @@ const PROSPECT_STAGES = [
 ];
 
 const QUOTE_STATUSES = ["Not Started", "Quote Requested", "Drafting", "Sent", "Under Review", "Accepted", "Rejected"];
+const QUOTE_PROJECT_TYPES = [
+  "Website",
+  "Website Redesign",
+  "Website + Booking",
+  "Website + Basic SEO",
+  "Mobile App",
+  "Website + Mobile App",
+  "Maintenance / Support",
+  "Other",
+];
+const QUOTE_PACKAGE_TYPES = ["Starter", "Professional", "Premium", "Custom"];
 const FOLLOW_UP_PRIORITIES = ["Low", "Normal", "High"];
 const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received"]);
 const COMMUNICATION_METHODS = ["Call", "Email", "SMS", "WhatsApp", "Onsite Visit", "LinkedIn", "Other"];
@@ -213,6 +224,7 @@ export function renderDetailPanel({
         primaryContact,
         otherContacts,
         activeTab: selectedTab,
+        isSaved,
         senderProfile,
         outreachDrafts,
         onSaveSenderProfile,
@@ -221,6 +233,11 @@ export function renderDetailPanel({
         onUpdateOutreachTemplateDraft,
         onSaveOutreachTemplate,
         onResetOutreachTemplate,
+        onSaveQuoteDetails,
+        onCopyQuoteSummary,
+        onMarkQuoteSent,
+        onMarkQuoteAccepted,
+        onMarkQuoteRejected,
       })}
     </div>
   `;
@@ -306,6 +323,46 @@ export function renderDetailPanel({
     });
   });
 
+  const quoteFields = container.querySelectorAll("[data-quote-field]");
+  quoteFields.forEach((field) => {
+    const refresh = () => updateQuotePreview(container, company, senderProfile);
+    field.addEventListener("input", refresh);
+    field.addEventListener("change", refresh);
+  });
+
+  const saveQuoteButton = container.querySelector("[data-save-quote-details]");
+  if (saveQuoteButton) {
+    saveQuoteButton.addEventListener("click", () => onSaveQuoteDetails(saveQuoteButton.getAttribute("data-company-id"), readQuotePayload(container)));
+  }
+
+  const copyQuoteButton = container.querySelector("[data-copy-quote-summary]");
+  if (copyQuoteButton) {
+    copyQuoteButton.addEventListener("click", () => {
+      const companyId = copyQuoteButton.getAttribute("data-company-id");
+      onCopyQuoteSummary(companyId, readQuotePayload(container));
+      showTransientButtonState(copyQuoteButton, "Copied");
+    });
+  }
+
+  const sentQuoteButton = container.querySelector("[data-mark-quote-sent]");
+  if (sentQuoteButton) {
+    sentQuoteButton.addEventListener("click", () => onMarkQuoteSent(sentQuoteButton.getAttribute("data-company-id"), readQuotePayload(container)));
+  }
+
+  const acceptedQuoteButton = container.querySelector("[data-mark-quote-accepted]");
+  if (acceptedQuoteButton) {
+    acceptedQuoteButton.addEventListener("click", () =>
+      onMarkQuoteAccepted(acceptedQuoteButton.getAttribute("data-company-id"), readQuotePayload(container))
+    );
+  }
+
+  const rejectedQuoteButton = container.querySelector("[data-mark-quote-rejected]");
+  if (rejectedQuoteButton) {
+    rejectedQuoteButton.addEventListener("click", () =>
+      onMarkQuoteRejected(rejectedQuoteButton.getAttribute("data-company-id"), readQuotePayload(container))
+    );
+  }
+
   const toneSelect = container.querySelector("[data-outreach-tone]");
   if (toneSelect) {
     toneSelect.addEventListener("change", () =>
@@ -317,6 +374,8 @@ export function renderDetailPanel({
   if (saveSenderButton) {
     saveSenderButton.addEventListener("click", () => onSaveSenderProfile(readSenderProfilePayload(container)));
   }
+
+  updateQuotePreview(container, company, senderProfile);
 
   const saveButton = container.querySelector("[data-save-company]");
   if (saveButton) {
@@ -541,6 +600,7 @@ function renderTabContent({
   primaryContact,
   otherContacts,
   activeTab,
+  isSaved = false,
   senderProfile = {},
   outreachDrafts = {},
   onSaveSenderProfile,
@@ -549,6 +609,11 @@ function renderTabContent({
   onUpdateOutreachTemplateDraft,
   onSaveOutreachTemplate,
   onResetOutreachTemplate,
+  onSaveQuoteDetails,
+  onCopyQuoteSummary,
+  onMarkQuoteSent,
+  onMarkQuoteAccepted,
+  onMarkQuoteRejected,
 }) {
   if (activeTab === "contact") {
     return `
@@ -725,12 +790,96 @@ function renderTabContent({
   }
 
   if (activeTab === "quote") {
+    const quote = getQuoteDraftModel(company);
+    const quoteSummary = buildQuoteSummaryPreview(company, quote, senderProfile);
+    const packageHint = getQuotePackageHint(company);
     return `
-      <div class="overview-grid">
-        ${renderProcessCard("Quote status", company.quote_status || "Not Started")}
-        ${renderProcessCard("Convert to Client", CONVERTIBLE_STAGES.has(getProspectStage(company)) ? "Available" : "Requires Contract Received")}
-      </div>
-      ${renderConversionPlaceholder(company)}
+      <section class="workflow-card">
+        <p class="detail-section-title">Quote preparation</p>
+        <div class="overview-grid">
+          ${renderProcessCard("Quote status", quote.quoteStatus || "Not Started")}
+          ${renderProcessCard("Suggested package", packageHint)}
+          ${renderProcessCard("Final quote amount", quote.finalQuoteAmount ? formatCurrencyDisplay(quote.finalQuoteAmount) : "TBD")}
+          ${renderProcessCard("Quote follow-up", quote.quoteFollowUpDate || "Not scheduled")}
+        </div>
+        <div class="workflow-form-grid">
+          <label class="inline-field">
+            <span>Quote Status</span>
+            <select data-quote-field data-quote-status>
+              ${QUOTE_STATUSES.map(
+                (status) => `<option value="${escapeAttribute(status)}" ${status === quote.quoteStatus ? "selected" : ""}>${escapeHtml(status)}</option>`
+              ).join("")}
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Project Type</span>
+            <select data-quote-field data-quote-project-type>
+              ${QUOTE_PROJECT_TYPES.map(
+                (projectType) =>
+                  `<option value="${escapeAttribute(projectType)}" ${projectType === quote.projectType ? "selected" : ""}>${escapeHtml(projectType)}</option>`
+              ).join("")}
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Package Type</span>
+            <select data-quote-field data-quote-package-type>
+              ${QUOTE_PACKAGE_TYPES.map(
+                (packageType) =>
+                  `<option value="${escapeAttribute(packageType)}" ${packageType === quote.packageType ? "selected" : ""}>${escapeHtml(packageType)}</option>`
+              ).join("")}
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Estimated Price</span>
+            <input type="number" min="0" step="50" value="${escapeAttribute(quote.estimatedPrice || "")}" data-quote-field data-quote-estimated-price />
+          </label>
+          <label class="inline-field">
+            <span>Discount</span>
+            <input type="number" min="0" step="25" value="${escapeAttribute(quote.discount || "")}" data-quote-field data-quote-discount />
+          </label>
+          <label class="inline-field">
+            <span>Final Quote Amount</span>
+            <input type="text" value="${escapeAttribute(quote.finalQuoteAmountDisplay || "TBD")}" data-quote-final-amount readonly />
+          </label>
+        </div>
+        <div class="workflow-form-grid">
+          <label class="inline-field">
+            <span>Payment Terms</span>
+            <input type="text" value="${escapeAttribute(quote.paymentTerms || "")}" data-quote-field data-quote-payment-terms placeholder="50% upfront, 50% on launch" />
+          </label>
+          <label class="inline-field">
+            <span>Timeline Estimate</span>
+            <input type="text" value="${escapeAttribute(quote.timelineEstimate || "")}" data-quote-field data-quote-timeline-estimate placeholder="2-3 weeks" />
+          </label>
+          <label class="inline-field">
+            <span>Quote Sent Date</span>
+            <input type="date" value="${escapeAttribute(quote.quoteSentDate || "")}" data-quote-field data-quote-sent-date />
+          </label>
+          <label class="inline-field">
+            <span>Quote Follow-Up Date</span>
+            <input type="date" value="${escapeAttribute(quote.quoteFollowUpDate || "")}" data-quote-field data-quote-follow-up-date />
+          </label>
+        </div>
+        <div class="workflow-form-grid">
+          <label class="inline-field">
+            <span>Scope Notes</span>
+            <textarea class="workflow-textarea" rows="4" data-quote-field data-quote-scope-notes placeholder="Pages, features, booking, SEO, integrations">${escapeHtml(quote.scopeNotes || "")}</textarea>
+          </label>
+          <label class="inline-field">
+            <span>Internal Notes</span>
+            <textarea class="workflow-textarea" rows="4" data-quote-field data-quote-internal-notes placeholder="Internal pricing context, assumptions, risks">${escapeHtml(quote.internalNotes || "")}</textarea>
+          </label>
+        </div>
+        <div class="workflow-actions">
+          <button class="primary-btn" type="button" data-save-quote-details data-company-id="${escapeAttribute(company.id)}">Save Quote</button>
+          <button class="secondary-btn" type="button" data-copy-quote-summary data-company-id="${escapeAttribute(company.id)}">Copy Quote Summary</button>
+          <button class="secondary-btn" type="button" data-mark-quote-sent data-company-id="${escapeAttribute(company.id)}">Mark Quote Sent</button>
+          <button class="secondary-btn" type="button" data-mark-quote-accepted data-company-id="${escapeAttribute(company.id)}">Mark Accepted</button>
+          <button class="secondary-btn" type="button" data-mark-quote-rejected data-company-id="${escapeAttribute(company.id)}">Mark Rejected</button>
+        </div>
+        <textarea class="workflow-textarea quote-summary" rows="8" readonly data-quote-summary-preview>${escapeHtml(quoteSummary)}</textarea>
+        ${!isSaved ? `<p class="toolbar-subtle">Save prospect to keep quote details.</p>` : ""}
+      </section>
     `;
   }
 
@@ -1534,6 +1683,214 @@ function readSenderProfilePayload(container) {
     website: container.querySelector("[data-sender-website]")?.value || "",
     pitch: container.querySelector("[data-sender-pitch]")?.value || "",
   };
+}
+
+function readQuotePayload(container) {
+  const estimatedPrice = String(container.querySelector("[data-quote-estimated-price]")?.value || "").trim();
+  const discount = String(container.querySelector("[data-quote-discount]")?.value || "").trim();
+  const finalQuoteAmount = calculateQuoteAmountValue(estimatedPrice, discount);
+
+  return {
+    quoteStatus: container.querySelector("[data-quote-status]")?.value || "Not Started",
+    projectType: container.querySelector("[data-quote-project-type]")?.value || "Website",
+    packageType: container.querySelector("[data-quote-package-type]")?.value || "Professional",
+    estimatedPrice,
+    discount,
+    finalQuoteAmount,
+    finalQuoteAmountDisplay: formatCurrencyDisplay(finalQuoteAmount),
+    paymentTerms: container.querySelector("[data-quote-payment-terms]")?.value || "",
+    timelineEstimate: container.querySelector("[data-quote-timeline-estimate]")?.value || "",
+    scopeNotes: container.querySelector("[data-quote-scope-notes]")?.value || "",
+    internalNotes: container.querySelector("[data-quote-internal-notes]")?.value || "",
+    quoteSentDate: container.querySelector("[data-quote-sent-date]")?.value || "",
+    quoteFollowUpDate: container.querySelector("[data-quote-follow-up-date]")?.value || "",
+  };
+}
+
+function calculateQuoteAmountValue(estimatedPrice, discount) {
+  const estimated = parseNumericQuoteValue(estimatedPrice);
+  const discountValue = parseNumericQuoteValue(discount);
+  return Math.max(0, Math.round(estimated - discountValue));
+}
+
+function parseNumericQuoteValue(value) {
+  const normalized = String(value || "")
+    .replace(/[$,]/g, "")
+    .trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatCurrencyDisplay(value) {
+  const amount = parseNumericQuoteValue(value);
+  if (!amount) {
+    return "";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function getQuotePackageHint(company) {
+  const websiteStatus = String(company?.websiteStatus || "").trim();
+  const websiteQualityStatus = String(company?.websiteQualityStatus || "").trim();
+  const opportunityPriority = String(company?.opportunityPriority || company?.lead_label || "").trim();
+
+  if (opportunityPriority === "Best Prospect") {
+    return "Professional or Premium";
+  }
+
+  if (websiteStatus === "No Website") {
+    return "Starter or Professional";
+  }
+
+  if (websiteStatus === "Social Only") {
+    return "Professional";
+  }
+
+  if (websiteStatus === "Booking Link Only") {
+    return "Website + Booking or Professional";
+  }
+
+  if (websiteQualityStatus === "Weak Website" || websiteQualityStatus === "Broken Website") {
+    return "Website Redesign or Professional";
+  }
+
+  if (websiteStatus === "Weak Website" || websiteStatus === "Broken Website") {
+    return "Website Redesign or Professional";
+  }
+
+  return "Professional";
+}
+
+function getQuoteProjectType(company) {
+  const websiteStatus = String(company?.websiteStatus || "").trim();
+  const websiteQualityStatus = String(company?.websiteQualityStatus || "").trim();
+
+  if (websiteStatus === "Booking Link Only") {
+    return "Website + Booking";
+  }
+
+  if (websiteStatus === "Weak Website" || websiteStatus === "Broken Website") {
+    return "Website Redesign";
+  }
+
+  if (websiteQualityStatus === "Weak Website" || websiteQualityStatus === "Broken Website") {
+    return "Website Redesign";
+  }
+
+  return "Website";
+}
+
+function getQuoteDraftModel(company) {
+  const estimatedPrice = parseNumericQuoteValue(company?.quote_estimated_price || company?.estimated_price || company?.quote_price || 0);
+  const discount = parseNumericQuoteValue(company?.quote_discount || 0);
+  const finalQuoteAmount = Number(
+    company?.quote_final_quote_amount ?? calculateQuoteAmountValue(estimatedPrice, discount)
+  );
+
+  return {
+    quoteStatus: String(company?.quote_status || "Not Started").trim() || "Not Started",
+    projectType: String(company?.quote_project_type || getQuoteProjectType(company)).trim() || "Website",
+    packageType: String(company?.quote_package_type || "Professional").trim() || "Professional",
+    estimatedPrice,
+    discount,
+    finalQuoteAmount,
+    finalQuoteAmountDisplay: formatCurrencyDisplay(finalQuoteAmount) || "TBD",
+    paymentTerms: String(company?.quote_payment_terms || "").trim(),
+    timelineEstimate: String(company?.quote_timeline_estimate || "").trim(),
+    scopeNotes: String(company?.quote_scope_notes || "").trim(),
+    internalNotes: String(company?.quote_internal_notes || "").trim(),
+    quoteSentDate: String(company?.quote_sent_date || "").trim(),
+    quoteFollowUpDate: String(company?.quote_follow_up_date || company?.next_follow_up || "").trim(),
+  };
+}
+
+function buildQuoteSummaryPreview(company, quote, senderProfile = {}) {
+  const businessName = company?.name || "your business";
+  const projectType = String(quote?.projectType || "Website").trim() || "Website";
+  const packageType = String(quote?.packageType || "Professional").trim() || "Professional";
+  const scopeNotes = String(quote?.scopeNotes || "").trim() || "Scope to be confirmed";
+  const timelineEstimate = String(quote?.timelineEstimate || "").trim() || "To be confirmed";
+  const paymentTerms = String(quote?.paymentTerms || "").trim() || "To be confirmed";
+  const finalAmount = formatCurrencyDisplay(quote?.finalQuoteAmount) || "TBD";
+  const discount = formatCurrencyDisplay(quote?.discount) || "$0";
+  const senderName = String(senderProfile?.yourName || "").trim();
+  const senderCompany = String(senderProfile?.companyName || "").trim();
+  const senderLabel = [senderName, senderCompany].filter(Boolean).join(" · ");
+
+  const nextStep =
+    quote?.quoteStatus === "Accepted"
+      ? "Please confirm the final scope and we can get started."
+      : quote?.quoteStatus === "Rejected"
+        ? "Thanks for reviewing it. I’m happy to revisit this later if useful."
+        : "Please review the scope and let me know if you'd like any changes.";
+
+  const lines = [
+    `Quote for ${businessName}`,
+    `Project type: ${projectType}`,
+    `Package: ${packageType}`,
+    `Scope: ${scopeNotes}`,
+    `Timeline: ${timelineEstimate}`,
+    `Estimated price: ${formatCurrencyDisplay(quote?.estimatedPrice) || "TBD"}`,
+    `Discount: ${discount}`,
+    `Final quote amount: ${finalAmount}`,
+    `Payment terms: ${paymentTerms}`,
+    `Next step: ${nextStep}`,
+  ];
+
+  if (senderLabel) {
+    lines.push(`Prepared by: ${senderLabel}`);
+  } else if (String(senderProfile?.pitch || "").trim()) {
+    lines.push(`Service pitch: ${String(senderProfile.pitch).trim()}`);
+  }
+
+  const senderContactLine = [
+    String(senderProfile?.phone || "").trim() ? `Phone: ${String(senderProfile.phone).trim()}` : "",
+    String(senderProfile?.email || "").trim() ? `Email: ${String(senderProfile.email).trim()}` : "",
+    String(senderProfile?.website || "").trim() ? `Portfolio: ${String(senderProfile.website).trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  if (senderContactLine) {
+    lines.push(`Contact: ${senderContactLine}`);
+  }
+
+  return lines.join("\n");
+}
+
+function updateQuotePreview(container, company = {}, senderProfile = {}) {
+  const summaryField = container.querySelector("[data-quote-summary-preview]");
+  const finalAmountField = container.querySelector("[data-quote-final-amount]");
+  if (!summaryField && !finalAmountField) {
+    return;
+  }
+
+  const quote = readQuotePayload(container);
+  const summary = buildQuoteSummaryPreview(company || {}, quote, senderProfile || {});
+
+  if (summaryField) {
+    summaryField.value = summary;
+  }
+
+  if (finalAmountField) {
+    finalAmountField.value = quote.finalQuoteAmountDisplay || "TBD";
+  }
+}
+
+function showTransientButtonState(button, label, timeout = 1200) {
+  if (!button) {
+    return;
+  }
+
+  const originalText = button.textContent;
+  button.textContent = label;
+  window.setTimeout(() => {
+    button.textContent = originalText;
+  }, timeout);
 }
 
 function renderEmailStatusBadge(contact) {

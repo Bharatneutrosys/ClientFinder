@@ -1349,6 +1349,11 @@ function renderDetail() {
     onUpdateOutreachTemplateDraft: updateOutreachTemplateDraft,
     onSaveOutreachTemplate: saveOutreachTemplate,
     onResetOutreachTemplate: resetOutreachTemplate,
+    onSaveQuoteDetails: saveQuoteDetails,
+    onCopyQuoteSummary: copyQuoteSummary,
+    onMarkQuoteSent: markQuoteSent,
+    onMarkQuoteAccepted: markQuoteAccepted,
+    onMarkQuoteRejected: markQuoteRejected,
     onApproveContact: (payload) => handleReviewUpdate(payload, "approved"),
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
     onCopyContactEmail: (payload) => copyToClipboard(payload.email, "Email copied."),
@@ -2038,6 +2043,399 @@ function deriveQuoteStatusFromMilestones(milestones, currentQuoteStatus = "Not S
   }
 
   return currentQuoteStatus || "Not Started";
+}
+
+function parseMoneyValue(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const normalized = String(value || "")
+    .replace(/[$,]/g, "")
+    .trim();
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMoneyValue(value) {
+  const amount = parseMoneyValue(value);
+  if (!amount) {
+    return "";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function calculateFinalQuoteAmount(estimatedPrice, discount) {
+  return Math.max(0, Math.round(parseMoneyValue(estimatedPrice) - parseMoneyValue(discount)));
+}
+
+function getSuggestedQuotePackage(company) {
+  const websiteStatus = String(company?.websiteStatus || "").trim();
+  const websiteQualityStatus = String(company?.websiteQualityStatus || "").trim();
+  const opportunityPriority = String(company?.opportunityPriority || company?.lead_label || "").trim();
+
+  if (opportunityPriority === "Best Prospect") {
+    return {
+      packageType: "Premium",
+      hint: "Professional or Premium",
+    };
+  }
+
+  if (websiteStatus === "No Website") {
+    return {
+      packageType: "Professional",
+      hint: "Starter or Professional",
+    };
+  }
+
+  if (websiteStatus === "Social Only") {
+    return {
+      packageType: "Professional",
+      hint: "Professional",
+    };
+  }
+
+  if (websiteStatus === "Booking Link Only") {
+    return {
+      packageType: "Professional",
+      hint: "Website + Booking or Professional",
+    };
+  }
+
+  if (
+    websiteStatus === "Weak Website" ||
+    websiteStatus === "Broken Website" ||
+    websiteQualityStatus === "Weak Website" ||
+    websiteQualityStatus === "Broken Website"
+  ) {
+    return {
+      packageType: "Professional",
+      hint: "Website Redesign or Professional",
+    };
+  }
+
+  return {
+    packageType: "Professional",
+    hint: "Professional",
+  };
+}
+
+function getSuggestedProjectType(company) {
+  const websiteStatus = String(company?.websiteStatus || "").trim();
+  const websiteQualityStatus = String(company?.websiteQualityStatus || "").trim();
+
+  if (websiteStatus === "Booking Link Only") {
+    return "Website + Booking";
+  }
+
+  if (websiteQualityStatus === "Weak Website") {
+    return "Website Redesign";
+  }
+
+  if (websiteStatus === "Weak Website" || websiteStatus === "Broken Website") {
+    return "Website Redesign";
+  }
+
+  if (websiteStatus === "No Website" || websiteStatus === "Social Only") {
+    return "Website";
+  }
+
+  return "Website";
+}
+
+function getDefaultQuote(company = {}) {
+  const packageSuggestion = getSuggestedQuotePackage(company);
+  const estimatedPrice = parseMoneyValue(company?.quote_estimated_price || company?.estimated_price || 0);
+  const discount = parseMoneyValue(company?.quote_discount || 0);
+  const finalQuoteAmount = calculateFinalQuoteAmount(estimatedPrice, discount);
+
+  return {
+    quote_status: String(company?.quote_status || "Not Started").trim() || "Not Started",
+    quote_project_type: String(company?.quote_project_type || getSuggestedProjectType(company)).trim() || "Website",
+    quote_package_type: String(company?.quote_package_type || packageSuggestion.packageType).trim() || packageSuggestion.packageType,
+    quote_estimated_price: estimatedPrice,
+    quote_discount: discount,
+    quote_final_quote_amount: finalQuoteAmount,
+    quote_payment_terms: String(company?.quote_payment_terms || "").trim(),
+    quote_timeline_estimate: String(company?.quote_timeline_estimate || "").trim(),
+    quote_scope_notes: String(company?.quote_scope_notes || "").trim(),
+    quote_internal_notes: String(company?.quote_internal_notes || "").trim(),
+    quote_sent_date: String(company?.quote_sent_date || "").trim(),
+    quote_follow_up_date: String(company?.quote_follow_up_date || company?.next_follow_up || "").trim(),
+  };
+}
+
+function buildQuoteSummary(company, quote = {}, senderProfile = {}) {
+  const quoteModel = { ...getDefaultQuote(company), ...quote };
+  const finalAmount = formatMoneyValue(
+    quoteModel.quote_final_quote_amount || calculateFinalQuoteAmount(quoteModel.quote_estimated_price, quoteModel.quote_discount)
+  );
+  const packageLabel = quoteModel.quote_package_type || "Professional";
+  const projectType = quoteModel.quote_project_type || "Website";
+  const businessName = company?.name || "your business";
+  const scopeNotes = String(quoteModel.quote_scope_notes || "").trim() || "Scope to be confirmed";
+  const timelineEstimate = String(quoteModel.quote_timeline_estimate || "").trim() || "To be confirmed";
+  const paymentTerms = String(quoteModel.quote_payment_terms || "").trim() || "To be confirmed";
+  const senderName = String(senderProfile?.yourName || "").trim();
+  const senderCompany = String(senderProfile?.companyName || "").trim();
+  const senderLabel = [senderName, senderCompany].filter(Boolean).join(" · ");
+  const nextStep =
+    quoteModel.quote_status === "Accepted"
+      ? "Please confirm the final scope and we can get the project moving."
+      : quoteModel.quote_status === "Rejected"
+        ? "I appreciate the review. If anything changes, I am happy to revisit the scope."
+        : "Please review the scope and let me know if you'd like any changes.";
+
+  const summaryLines = [
+    `Quote for ${businessName}`,
+    `Project type: ${projectType}`,
+    `Package: ${packageLabel}`,
+    `Scope: ${scopeNotes}`,
+    `Timeline: ${timelineEstimate}`,
+    `Estimated price: ${formatMoneyValue(quoteModel.quote_estimated_price) || "TBD"}`,
+    `Discount: ${formatMoneyValue(quoteModel.quote_discount) || "$0"}`,
+    `Final quote amount: ${finalAmount || "TBD"}`,
+    `Payment terms: ${paymentTerms}`,
+    `Next step: ${nextStep}`,
+  ];
+
+  if (senderLabel) {
+    summaryLines.push(`Prepared by: ${senderLabel}`);
+  } else if (String(senderProfile?.pitch || "").trim()) {
+    summaryLines.push(`Service pitch: ${String(senderProfile.pitch).trim()}`);
+  }
+
+  const senderContactLine = [
+    String(senderProfile?.phone || "").trim() ? `Phone: ${String(senderProfile.phone).trim()}` : "",
+    String(senderProfile?.email || "").trim() ? `Email: ${String(senderProfile.email).trim()}` : "",
+    String(senderProfile?.website || "").trim() ? `Portfolio: ${String(senderProfile.website).trim()}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  if (senderContactLine) {
+    summaryLines.push(`Contact: ${senderContactLine}`);
+  }
+
+  return summaryLines.join("\n");
+}
+
+function saveQuoteDetails(companyId, quoteDetails = {}, options = {}) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(companyId);
+  const now = new Date().toISOString();
+  const estimate = parseMoneyValue(quoteDetails.estimatedPrice);
+  const discount = parseMoneyValue(quoteDetails.discount);
+  const finalQuoteAmount = calculateFinalQuoteAmount(estimate, discount);
+  const quoteStatus = String(quoteDetails.quoteStatus || workflow.quote_status || company.quote_status || "Not Started").trim() || "Not Started";
+  const quoteProjectType = String(quoteDetails.projectType || workflow.quote_project_type || company.quote_project_type || getSuggestedProjectType(company)).trim();
+  const quotePackageType = String(quoteDetails.packageType || workflow.quote_package_type || company.quote_package_type || getSuggestedQuotePackage(company).packageType).trim();
+  const quotePaymentTerms = String(quoteDetails.paymentTerms || workflow.quote_payment_terms || company.quote_payment_terms || "").trim();
+  const quoteTimelineEstimate = String(quoteDetails.timelineEstimate || workflow.quote_timeline_estimate || company.quote_timeline_estimate || "").trim();
+  const quoteScopeNotes = String(quoteDetails.scopeNotes || workflow.quote_scope_notes || company.quote_scope_notes || "").trim();
+  const quoteInternalNotes = String(quoteDetails.internalNotes || workflow.quote_internal_notes || company.quote_internal_notes || "").trim();
+  const quoteSentDate = String(quoteDetails.quoteSentDate || workflow.quote_sent_date || company.quote_sent_date || "").trim();
+  const quoteFollowUpDate = String(quoteDetails.quoteFollowUpDate || workflow.quote_follow_up_date || company.quote_follow_up_date || "").trim();
+
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    quote_status: quoteStatus,
+    quote_project_type: quoteProjectType,
+    quote_package_type: quotePackageType,
+    quote_estimated_price: estimate,
+    quote_discount: discount,
+    quote_final_quote_amount: finalQuoteAmount,
+    quote_payment_terms: quotePaymentTerms,
+    quote_timeline_estimate: quoteTimelineEstimate,
+    quote_scope_notes: quoteScopeNotes,
+    quote_internal_notes: quoteInternalNotes,
+    quote_sent_date: quoteSentDate,
+    quote_follow_up_date: quoteFollowUpDate,
+    next_follow_up: quoteFollowUpDate || workflow.next_follow_up || company.next_follow_up || "",
+    quote_summary: buildQuoteSummary(
+      company,
+      {
+        quote_status: quoteStatus,
+        quote_project_type: quoteProjectType,
+        quote_package_type: quotePackageType,
+        quote_estimated_price: estimate,
+        quote_discount: discount,
+        quote_final_quote_amount: finalQuoteAmount,
+        quote_payment_terms: quotePaymentTerms,
+        quote_timeline_estimate: quoteTimelineEstimate,
+        quote_scope_notes: quoteScopeNotes,
+        quote_internal_notes: quoteInternalNotes,
+        quote_sent_date: quoteSentDate,
+        quote_follow_up_date: quoteFollowUpDate,
+      },
+      state.senderProfile
+    ),
+    lastUpdatedAt: now,
+    updated_at: now,
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  if (!options.skipActivity) {
+    recordProspectActivity(company.id, "Updated quote details", "Manual", "quote-update");
+  }
+  renderDetail();
+  updateSummary();
+  renderTodayFollowups();
+  applyFilters();
+}
+
+function copyQuoteSummary(companyId, quoteDetails = {}) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  const summary = buildQuoteSummary(
+    company,
+    {
+      ...getDefaultQuote(company),
+      ...quoteDetails,
+    },
+    state.senderProfile
+  );
+  copyToClipboard(summary, "Quote summary copied.");
+  if (findSavedProspectId(company)) {
+    recordProspectActivity(company.id, "Copied Quote Summary", "Manual", "quote-copy-summary");
+  }
+}
+
+function moveProspectStageForward(companyId, nextStage, source = "manual") {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company || !nextStage) {
+    return false;
+  }
+
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(companyId);
+  const currentStage = normalizeProspectStage(
+    workflow.currentStage || workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"
+  );
+  if (compareStagePriority(nextStage, currentStage) <= 0) {
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    currentStage: nextStage,
+    prospect_stage: nextStage,
+    manual_stage_override: source === "manual" ? true : Boolean(workflow.manual_stage_override),
+    stageUpdateSource: source,
+    stageUpdatedAt: now,
+    lastUpdatedAt: now,
+    updated_at: now,
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  return true;
+}
+
+function markQuoteSent(companyId, quoteDetails = {}) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  const today = getTodayDateKey();
+  const followUpDate = getSuggestedFollowUpDate("Quote Sent", today, "");
+  saveQuoteDetails(companyId, {
+    ...quoteDetails,
+    quoteStatus: "Sent",
+    quoteSentDate: today,
+    quoteFollowUpDate: followUpDate,
+  }, { skipActivity: true });
+
+  const workflow = getProspectWorkflow(companyId);
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    quote_status: "Sent",
+    quote_sent_date: today,
+    quote_follow_up_date: followUpDate,
+    next_follow_up: followUpDate,
+    last_contacted_at: today,
+    next_action: String(quoteDetails.nextAction || workflow.next_action || "Follow up on quote").trim(),
+    lastUpdatedAt: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  toggleMilestone(companyId, "Quote sent", true);
+  recordProspectActivity(company.id, "Quote Sent", "Manual", "quote-sent");
+  elements.statusMessage.textContent = `Marked quote sent for ${company.name || "prospect"}.`;
+  renderDetail();
+  renderTodayFollowups();
+  updateSummary();
+  applyFilters();
+}
+
+function markQuoteAccepted(companyId, quoteDetails = {}) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  saveQuoteDetails(companyId, {
+    ...quoteDetails,
+    quoteStatus: "Accepted",
+  }, { skipActivity: true });
+
+  const workflow = getProspectWorkflow(companyId);
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    quote_status: "Accepted",
+    lastUpdatedAt: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  moveProspectStageForward(company.id, "Contract Expected", "manual");
+  recordProspectActivity(company.id, "Quote Accepted", "Manual", "quote-accepted");
+  elements.statusMessage.textContent = `Marked quote accepted for ${company.name || "prospect"}.`;
+  renderDetail();
+  updateSummary();
+  applyFilters();
+}
+
+function markQuoteRejected(companyId, quoteDetails = {}) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  saveQuoteDetails(companyId, {
+    ...quoteDetails,
+    quoteStatus: "Rejected",
+  }, { skipActivity: true });
+
+  const workflow = getProspectWorkflow(companyId);
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    quote_status: "Rejected",
+    lastUpdatedAt: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  moveProspectStageForward(company.id, "Lost", "manual");
+  recordProspectActivity(company.id, "Quote Rejected", "Manual", "quote-rejected");
+  elements.statusMessage.textContent = `Marked quote rejected for ${company.name || "prospect"}.`;
+  renderDetail();
+  updateSummary();
+  applyFilters();
 }
 
 function getStageRank(stage) {
@@ -2812,6 +3210,55 @@ function applyProspectWorkflow(company) {
     last_contacted_at: workflow.last_contacted_at || lastCommunication?.date || "",
     follow_up_priority: workflow.follow_up_priority || company.follow_up_priority || "Normal",
     quote_status: workflow.quote_status || company.quote_status || "Not Started",
+    quote_project_type: workflow.quote_project_type || company.quote_project_type || getSuggestedProjectType(company),
+    quote_package_type:
+      workflow.quote_package_type || company.quote_package_type || getSuggestedQuotePackage(company).packageType,
+    quote_estimated_price: Number(
+      workflow.quote_estimated_price ?? company.quote_estimated_price ?? company.quote_price ?? 0
+    ),
+    quote_discount: Number(workflow.quote_discount ?? company.quote_discount ?? 0),
+    quote_final_quote_amount: Number(
+      workflow.quote_final_quote_amount ??
+        company.quote_final_quote_amount ??
+        calculateFinalQuoteAmount(
+          workflow.quote_estimated_price ?? company.quote_estimated_price ?? company.quote_price ?? 0,
+          workflow.quote_discount ?? company.quote_discount ?? 0
+        )
+    ),
+    quote_payment_terms: workflow.quote_payment_terms || company.quote_payment_terms || "",
+    quote_timeline_estimate: workflow.quote_timeline_estimate || company.quote_timeline_estimate || "",
+    quote_scope_notes: workflow.quote_scope_notes || company.quote_scope_notes || "",
+    quote_internal_notes: workflow.quote_internal_notes || company.quote_internal_notes || "",
+    quote_sent_date: workflow.quote_sent_date || company.quote_sent_date || "",
+    quote_follow_up_date: workflow.quote_follow_up_date || company.quote_follow_up_date || company.next_follow_up || "",
+    quote_summary:
+      workflow.quote_summary ||
+      company.quote_summary ||
+      buildQuoteSummary(
+        company,
+        {
+          quote_status: workflow.quote_status || company.quote_status || "Not Started",
+          quote_project_type: workflow.quote_project_type || company.quote_project_type || getSuggestedProjectType(company),
+          quote_package_type:
+            workflow.quote_package_type || company.quote_package_type || getSuggestedQuotePackage(company).packageType,
+          quote_estimated_price: workflow.quote_estimated_price ?? company.quote_estimated_price ?? company.quote_price ?? 0,
+          quote_discount: workflow.quote_discount ?? company.quote_discount ?? 0,
+          quote_final_quote_amount:
+            workflow.quote_final_quote_amount ??
+            company.quote_final_quote_amount ??
+            calculateFinalQuoteAmount(
+              workflow.quote_estimated_price ?? company.quote_estimated_price ?? company.quote_price ?? 0,
+              workflow.quote_discount ?? company.quote_discount ?? 0
+            ),
+          quote_payment_terms: workflow.quote_payment_terms || company.quote_payment_terms || "",
+          quote_timeline_estimate: workflow.quote_timeline_estimate || company.quote_timeline_estimate || "",
+          quote_scope_notes: workflow.quote_scope_notes || company.quote_scope_notes || "",
+          quote_internal_notes: workflow.quote_internal_notes || company.quote_internal_notes || "",
+          quote_sent_date: workflow.quote_sent_date || company.quote_sent_date || "",
+          quote_follow_up_date: workflow.quote_follow_up_date || company.quote_follow_up_date || company.next_follow_up || "",
+        },
+        state.senderProfile
+      ),
     websiteQualityStatus: workflow.websiteQualityStatus || company.websiteQualityStatus || "Not Checked",
     websiteQualityScore: Number(
       workflow.websiteQualityScore ?? company.websiteQualityScore ?? company.website_quality_score ?? 0
@@ -3072,7 +3519,7 @@ function ensureProspectWorkflow(companyId, company) {
     next_action: company?.next_action || "",
     last_contacted_at: company?.last_contacted_at || "",
     follow_up_priority: company?.follow_up_priority || "Normal",
-    quote_status: company?.quote_status || "Not Started",
+    ...getDefaultQuote(company),
     opportunityScore: Number(company?.opportunityScore || company?.lead_score || company?.confidence_score || 0),
     opportunityPriority:
       String(company?.opportunityPriority || company?.lead_label || getOpportunityPriority(company?.lead_score || 0)).trim() ||
