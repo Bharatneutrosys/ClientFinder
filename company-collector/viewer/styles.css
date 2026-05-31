@@ -972,6 +972,34 @@ a {
   white-space: nowrap;
 }
 
+.document-record-list {
+  display: grid;
+  gap: 10px;
+}
+
+.document-record {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #f0e6d8;
+  padding-top: 10px;
+}
+
+.document-record.overdue {
+  border-top-color: #d98c62;
+}
+
+.document-record-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.document-record-top strong {
+  display: block;
+  font-size: 0.96rem;
+}
+
 @media (max-width: 760px) {
   .onboarding-summary,
   .onboarding-item {
@@ -984,6 +1012,10 @@ a {
 
   .onboarding-item small {
     white-space: normal;
+  }
+
+  .document-record-top {
+    display: grid;
   }
 }
 

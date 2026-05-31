@@ -104,6 +104,44 @@ const HANDOVER_STATUSES = [
   "Support Started",
   "Blocked",
 ];
+const DOCUMENT_CATEGORIES = [
+  "Contract",
+  "Quote",
+  "Invoice",
+  "Payment Receipt",
+  "Logo / Brand Assets",
+  "Business Photos",
+  "Service List",
+  "Pricing / Packages",
+  "Website Content",
+  "Approval",
+  "Handover",
+  "Maintenance / Support",
+  "Other",
+];
+const DOCUMENT_STATUSES = ["Needed", "Requested", "Received", "Approved", "Sent to Client", "Missing", "Not Required"];
+const DOCUMENT_STORAGE_LOCATIONS = [
+  "Local computer",
+  "Google Drive",
+  "Email",
+  "WhatsApp",
+  "Client provided link",
+  "Vercel/GitHub",
+  "Other",
+];
+const REQUIRED_DOCUMENT_ITEMS = [
+  ["signedContract", "Signed contract"],
+  ["finalQuote", "Final quote"],
+  ["paymentReceipt", "Payment receipt"],
+  ["logoBrandAssets", "Logo/brand assets"],
+  ["serviceList", "Service list"],
+  ["pricingPackages", "Pricing/packages"],
+  ["businessPhotos", "Business photos/gallery"],
+  ["websiteContent", "Website content"],
+  ["finalApproval", "Final approval"],
+  ["handoverNotes", "Handover notes"],
+  ["maintenanceAgreement", "Maintenance/support agreement if applicable"],
+];
 const PROJECT_PHASES = [
   {
     key: "discovery",
@@ -1845,6 +1883,49 @@ function renderClientDetail() {
       );
     });
   });
+
+  const addDocumentButton = elements.detailContent.querySelector("[data-add-client-document]");
+  if (addDocumentButton) {
+    addDocumentButton.addEventListener("click", () => {
+      addClientDocument(addDocumentButton.getAttribute("data-add-client-document"), readDocumentFormPayload(elements.detailContent));
+    });
+  }
+
+  elements.detailContent.querySelectorAll("[data-document-field]").forEach((field) => {
+    field.addEventListener("change", () => {
+      const row = field.closest("[data-document-row]");
+      updateClientDocument(
+        client.clientId,
+        field.getAttribute("data-document-id"),
+        readDocumentRowPayload(row)
+      );
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-document-checklist-item]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const row = checkbox.closest("[data-document-checklist-row]");
+      updateDocumentChecklistItem(
+        client.clientId,
+        checkbox.getAttribute("data-document-checklist-item"),
+        {
+          checked: checkbox.checked,
+          note: row?.querySelector("[data-document-checklist-note]")?.value || "",
+        }
+      );
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-document-checklist-note]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const row = input.closest("[data-document-checklist-row]");
+      const checkbox = row?.querySelector("[data-document-checklist-item]");
+      updateDocumentChecklistItem(client.clientId, input.getAttribute("data-document-checklist-note"), {
+        checked: Boolean(checkbox?.checked),
+        note: input.value || "",
+      });
+    });
+  });
 }
 
 function renderClientTabContent(client, activeTab) {
@@ -2007,6 +2088,54 @@ function renderClientTabContent(client, activeTab) {
     `;
   }
 
+  if (activeTab === "documents") {
+    const checklist = normalizeDocumentChecklist(client.documentChecklist);
+    const documents = normalizeClientDocuments(client.documents);
+    const progress = calculateDocumentProgress(checklist, documents);
+    const overdueDocuments = getOverdueDocuments(documents);
+    return `
+      <section class="workflow-card">
+        <div class="onboarding-summary">
+          <div>
+            <p class="detail-section-title">Documents</p>
+            <strong>${escapeHtml(progress.completed)} of ${escapeHtml(progress.totalRequired)} required complete</strong>
+            <p class="toolbar-subtle">${escapeHtml(progress.missing)} missing - ${escapeHtml(progress.overdue)} overdue</p>
+          </div>
+          <span class="stage-chip">${escapeHtml(getDocumentStatus(progress))}</span>
+        </div>
+        <p class="toolbar-subtle">Do not store sensitive documents or passwords here yet. Use secure storage and record only references until database/file storage is added.</p>
+      </section>
+      <section class="workflow-card onboarding-group">
+        <p class="detail-section-title">Required Documents</p>
+        <div class="onboarding-list">
+          ${checklist.items.map((item) => renderDocumentChecklistItem(item)).join("")}
+        </div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Add Document Reference</p>
+        <div class="workflow-form-grid">
+          <label class="inline-field"><span>Category</span><select data-new-document-field="category">${DOCUMENT_CATEGORIES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          ${renderDocumentInput("Title", "title")}
+          <label class="inline-field"><span>Status</span><select data-new-document-field="status">${DOCUMENT_STATUSES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Storage Location</span><select data-new-document-field="storageLocation">${DOCUMENT_STORAGE_LOCATIONS.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          ${renderDocumentInput("Link or Reference", "linkOrReference")}
+          ${renderDocumentInput("Due Date", "dueDate", "date")}
+          ${renderDocumentInput("Received Date", "receivedDate", "date")}
+        </div>
+        <textarea class="workflow-textarea" rows="3" data-new-document-field="notes" placeholder="Notes"></textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-add-client-document="${escapeAttribute(client.clientId)}">Add Document</button></div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Document Records</p>
+        ${
+          documents.length
+            ? `<div class="document-record-list">${documents.map((document) => renderDocumentRecord(document, overdueDocuments)).join("")}</div>`
+            : `<p class="toolbar-subtle">No document references added yet.</p>`
+        }
+      </section>
+    `;
+  }
+
   return `
     <section class="workflow-card">
       <p class="detail-section-title">${escapeHtml(titleCase(activeTab))}</p>
@@ -2160,6 +2289,60 @@ function renderClientActivity(client) {
   `;
 }
 
+function renderDocumentChecklistItem(item) {
+  return `
+    <div class="onboarding-item" data-document-checklist-row>
+      <label class="onboarding-check">
+        <input
+          type="checkbox"
+          ${item.checked ? "checked" : ""}
+          data-document-checklist-item="${escapeAttribute(item.key)}"
+        />
+        <span>${escapeHtml(item.label)}</span>
+      </label>
+      <input
+        type="text"
+        value="${escapeAttribute(item.note || "")}"
+        placeholder="Note"
+        data-document-checklist-note="${escapeAttribute(item.key)}"
+      />
+      <small>${escapeHtml(item.updatedAt ? `Updated ${formatDateOnly(item.updatedAt)}` : "Not updated")}</small>
+    </div>
+  `;
+}
+
+function renderDocumentInput(label, field, type = "text") {
+  return `
+    <label class="inline-field">
+      <span>${escapeHtml(label)}</span>
+      <input type="${escapeAttribute(type)}" data-new-document-field="${escapeAttribute(field)}" />
+    </label>
+  `;
+}
+
+function renderDocumentRecord(document, overdueDocuments = []) {
+  const isOverdue = overdueDocuments.some((item) => item.documentId === document.documentId);
+  return `
+    <div class="document-record ${isOverdue ? "overdue" : ""}" data-document-row="${escapeAttribute(document.documentId)}">
+      <div class="document-record-top">
+        <div>
+          <strong>${escapeHtml(document.title || "Untitled document")}</strong>
+          <p class="toolbar-subtle">${escapeHtml(document.category || "Other")} ${isOverdue ? "- Overdue" : ""}</p>
+        </div>
+        <span class="stage-chip">${escapeHtml(document.status || "Needed")}</span>
+      </div>
+      <div class="workflow-form-grid">
+        <label class="inline-field"><span>Status</span><select data-document-id="${escapeAttribute(document.documentId)}" data-document-field="status">${DOCUMENT_STATUSES.map((value) => `<option value="${escapeAttribute(value)}" ${value === document.status ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Storage Location</span><select data-document-id="${escapeAttribute(document.documentId)}" data-document-field="storageLocation">${DOCUMENT_STORAGE_LOCATIONS.map((value) => `<option value="${escapeAttribute(value)}" ${value === document.storageLocation ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Link or Reference</span><input type="text" value="${escapeAttribute(document.linkOrReference || "")}" data-document-id="${escapeAttribute(document.documentId)}" data-document-field="linkOrReference" /></label>
+        <label class="inline-field"><span>Due Date</span><input type="date" value="${escapeAttribute(document.dueDate || "")}" data-document-id="${escapeAttribute(document.documentId)}" data-document-field="dueDate" /></label>
+        <label class="inline-field"><span>Received Date</span><input type="date" value="${escapeAttribute(document.receivedDate || "")}" data-document-id="${escapeAttribute(document.documentId)}" data-document-field="receivedDate" /></label>
+      </div>
+      <textarea class="workflow-textarea" rows="2" data-document-id="${escapeAttribute(document.documentId)}" data-document-field="notes" placeholder="Notes">${escapeHtml(document.notes || "")}</textarea>
+    </div>
+  `;
+}
+
 function renderClientInput(label, field, value, type = "text") {
   return `
     <label class="inline-field">
@@ -2167,6 +2350,22 @@ function renderClientInput(label, field, value, type = "text") {
       <input type="${escapeAttribute(type)}" value="${escapeAttribute(value || "")}" data-client-field="${escapeAttribute(field)}" />
     </label>
   `;
+}
+
+function readDocumentFormPayload(container) {
+  const payload = {};
+  container.querySelectorAll("[data-new-document-field]").forEach((field) => {
+    payload[field.getAttribute("data-new-document-field")] = field.value || "";
+  });
+  return payload;
+}
+
+function readDocumentRowPayload(row) {
+  const payload = {};
+  row?.querySelectorAll("[data-document-field]").forEach((field) => {
+    payload[field.getAttribute("data-document-field")] = field.value || "";
+  });
+  return payload;
 }
 
 function readClientFormPayload(container, activeTab) {
@@ -2779,6 +2978,100 @@ function updateHandoverItem(clientId, groupKey, itemKey, updates = {}) {
       handoverStatus: completedHandover ? "Completed" : supportStarted ? "Support Started" : inferredStatus,
       projectStatus: nextProjectStatus,
       activity,
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  renderDetail();
+}
+
+function addClientDocument(clientId, payload = {}) {
+  const now = new Date().toISOString();
+  const documentRecord = getDefaultDocumentRecord(payload);
+  if (!documentRecord.title) {
+    elements.statusMessage.textContent = "Enter a document title before adding.";
+    return;
+  }
+
+  state.clients = state.clients.map((client) =>
+    client.clientId === clientId
+      ? {
+          ...client,
+          documents: [documentRecord, ...normalizeClientDocuments(client.documents)],
+          activity: addClientActivity(client, `Document added: ${documentRecord.title}`, "Documents"),
+          updatedAt: now,
+        }
+      : client
+  );
+  saveClients();
+  elements.statusMessage.textContent = "Document reference added.";
+  renderDetail();
+}
+
+function updateClientDocument(clientId, documentId, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const documents = normalizeClientDocuments(client.documents);
+    const existingDocument = documents.find((document) => document.documentId === documentId);
+    const nextDocuments = documents.map((document) =>
+      document.documentId === documentId
+        ? {
+            ...document,
+            ...updates,
+            status: DOCUMENT_STATUSES.includes(updates.status) ? updates.status : document.status,
+            updatedAt: now,
+          }
+        : document
+    );
+    const nextDocument = nextDocuments.find((document) => document.documentId === documentId);
+    const statusChanged = existingDocument && nextDocument && existingDocument.status !== nextDocument.status;
+    const activity = statusChanged
+      ? addClientActivity(
+          client,
+          nextDocument.status === "Approved"
+            ? `Document marked approved: ${nextDocument.title}`
+            : `Document status updated: ${nextDocument.title} ${String(nextDocument.status || "").toLowerCase()}`,
+          "Documents"
+        )
+      : client.activity || [];
+
+    return {
+      ...client,
+      documents: nextDocuments,
+      activity,
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  renderDetail();
+}
+
+function updateDocumentChecklistItem(clientId, itemKey, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const checklist = normalizeDocumentChecklist(client.documentChecklist);
+    return {
+      ...client,
+      documentChecklist: {
+        items: checklist.items.map((item) =>
+          item.key === itemKey
+            ? {
+                ...item,
+                checked: Boolean(updates.checked),
+                note: String(updates.note || "").trim(),
+                updatedAt: now,
+              }
+            : item
+        ),
+      },
       updatedAt: now,
     };
   });
@@ -4427,6 +4720,8 @@ function getClients() {
         onboardingChecklist: normalizeOnboardingChecklist(client.onboardingChecklist),
         projectTracker: normalizeProjectTracker(client.projectTracker),
         handoverChecklist: normalizeHandoverChecklist(client.handoverChecklist),
+        documentChecklist: normalizeDocumentChecklist(client.documentChecklist),
+        documents: normalizeClientDocuments(client.documents),
         activity: Array.isArray(client.activity) ? client.activity : [],
       }))
     : [];
@@ -4469,6 +4764,8 @@ function createClientFromProspect(company) {
     onboardingChecklist: getDefaultOnboardingChecklist(),
     projectTracker: getDefaultProjectTracker(),
     handoverChecklist: getDefaultHandoverChecklist(),
+    documentChecklist: getDefaultDocumentChecklist(),
+    documents: [],
     handoverStatus: "Not Started",
     handoverLaunchDate: "",
     liveUrl: "",
@@ -4598,6 +4895,88 @@ function addClientActivity(client, message, source = "Project") {
     },
     ...(Array.isArray(client.activity) ? client.activity : []),
   ].slice(0, 50);
+}
+
+function getDefaultDocumentChecklist() {
+  return {
+    items: REQUIRED_DOCUMENT_ITEMS.map(([key, label]) => ({
+      key,
+      label,
+      checked: false,
+      note: "",
+      updatedAt: "",
+    })),
+  };
+}
+
+function normalizeDocumentChecklist(checklist) {
+  const defaults = getDefaultDocumentChecklist();
+  const existingItems = Array.isArray(checklist?.items) ? checklist.items : [];
+  return {
+    items: defaults.items.map((defaultItem) => {
+      const existingItem = existingItems.find((item) => item?.key === defaultItem.key) || {};
+      return {
+        ...defaultItem,
+        checked: Boolean(existingItem.checked),
+        note: String(existingItem.note || "").trim(),
+        updatedAt: existingItem.updatedAt || "",
+      };
+    }),
+  };
+}
+
+function getDefaultDocumentRecord(payload = {}) {
+  const now = new Date().toISOString();
+  return {
+    documentId: payload.documentId || `document-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    category: DOCUMENT_CATEGORIES.includes(payload.category) ? payload.category : "Other",
+    title: String(payload.title || "").trim(),
+    status: DOCUMENT_STATUSES.includes(payload.status) ? payload.status : "Needed",
+    storageLocation: DOCUMENT_STORAGE_LOCATIONS.includes(payload.storageLocation) ? payload.storageLocation : "Other",
+    linkOrReference: String(payload.linkOrReference || "").trim(),
+    dueDate: String(payload.dueDate || "").trim(),
+    receivedDate: String(payload.receivedDate || "").trim(),
+    notes: String(payload.notes || "").trim(),
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  };
+}
+
+function normalizeClientDocuments(documents) {
+  return Array.isArray(documents) ? documents.map((document) => getDefaultDocumentRecord(document)) : [];
+}
+
+function calculateDocumentProgress(checklist, documents = []) {
+  const normalizedChecklist = normalizeDocumentChecklist(checklist);
+  const totalRequired = normalizedChecklist.items.length;
+  const completed = normalizedChecklist.items.filter((item) => item.checked).length;
+  const missing = totalRequired - completed;
+  const overdue = getOverdueDocuments(documents).length;
+  return { totalRequired, completed, missing, overdue };
+}
+
+function getDocumentStatus(progress) {
+  if (!progress.completed && !progress.overdue) {
+    return "Not Started";
+  }
+
+  if (progress.overdue || progress.missing > 0) {
+    return progress.completed ? "Waiting on Client" : "In Progress";
+  }
+
+  if (progress.completed === progress.totalRequired) {
+    return "Complete";
+  }
+
+  return "Ready";
+}
+
+function getOverdueDocuments(documents = []) {
+  const today = getTodayDateKey();
+  return normalizeClientDocuments(documents).filter((document) => {
+    const dueDate = String(document.dueDate || "").slice(0, 10);
+    return dueDate && dueDate < today && !["Received", "Approved", "Not Required"].includes(document.status);
+  });
 }
 
 function getDefaultHandoverChecklist() {
