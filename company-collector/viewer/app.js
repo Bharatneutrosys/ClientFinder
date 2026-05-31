@@ -91,8 +91,98 @@ const CLIENT_PROJECT_STATUSES = [
   "Maintenance",
   "Completed",
   "Paused",
+  "Blocked",
 ];
 const CLIENT_TABS = ["overview", "project", "onboarding", "documents", "payments", "credentials", "handover", "support"];
+const PROJECT_PHASES = [
+  {
+    key: "discovery",
+    title: "Discovery",
+    status: "Discovery",
+    items: [
+      ["kickoffCompleted", "Kickoff completed", true],
+      ["businessGoalsConfirmed", "Business goals confirmed"],
+      ["targetAudienceConfirmed", "Target audience confirmed"],
+      ["referenceSitesReviewed", "Competitor/reference sites reviewed"],
+      ["sitemapConfirmed", "Sitemap/pages confirmed"],
+    ],
+  },
+  {
+    key: "contentCollection",
+    title: "Content Collection",
+    status: "Content Collection",
+    items: [
+      ["logoReceived", "Logo received"],
+      ["servicesContentReceived", "Services content received"],
+      ["pricingReceived", "Pricing/packages received"],
+      ["photosReceived", "Photos/gallery received"],
+      ["testimonialsReceived", "Testimonials received"],
+      ["contactDetailsConfirmed", "Business hours/contact details confirmed"],
+    ],
+  },
+  {
+    key: "design",
+    title: "Design",
+    status: "Design",
+    items: [
+      ["homepageStarted", "Homepage design started"],
+      ["homepageCompleted", "Homepage design completed"],
+      ["servicesDesignCompleted", "Services page design completed"],
+      ["mobileLayoutReviewed", "Mobile layout reviewed"],
+      ["designSent", "Design sent to client", true],
+      ["designApproved", "Design approved", true],
+    ],
+  },
+  {
+    key: "development",
+    title: "Development",
+    status: "Development",
+    items: [
+      ["projectSetupCompleted", "Project setup completed"],
+      ["pagesBuilt", "Pages built"],
+      ["contactFormConfigured", "Contact form configured"],
+      ["bookingFlowConfigured", "Booking/contact flow configured"],
+      ["seoBasicsAdded", "SEO basics added"],
+      ["mobileChecked", "Mobile responsiveness checked"],
+      ["qaCompleted", "Performance/basic QA completed"],
+    ],
+  },
+  {
+    key: "clientReview",
+    title: "Client Review",
+    status: "Client Review",
+    items: [
+      ["reviewLinkShared", "Review link shared", true],
+      ["feedbackReceived", "Client feedback received"],
+      ["revisionsLogged", "Revisions logged"],
+      ["revisionsCompleted", "Revisions completed"],
+    ],
+  },
+  {
+    key: "launch",
+    title: "Launch",
+    status: "Go Live",
+    items: [
+      ["domainHostingConfirmed", "Domain/hosting confirmed"],
+      ["finalApprovalReceived", "Final approval received", true, "Final Approval"],
+      ["websiteDeployed", "Website deployed", true, "Go Live"],
+      ["sslVerified", "SSL/live URL verified"],
+      ["googleProfileUpdated", "Google Business/Profile link updated if applicable"],
+    ],
+  },
+  {
+    key: "handover",
+    title: "Handover",
+    status: "Handover",
+    items: [
+      ["adminShared", "Admin/login shared if applicable"],
+      ["trainingCompleted", "Client training completed"],
+      ["resourcesShared", "Final files/resources shared"],
+      ["supportTermsConfirmed", "Support/maintenance terms confirmed"],
+      ["handoverCompleted", "Handover completed", true, "Completed"],
+    ],
+  },
+];
 const ONBOARDING_CHECKLIST_GROUPS = [
   {
     key: "businessInformation",
@@ -1582,7 +1672,13 @@ function renderClientDetail() {
   const saveButton = elements.detailContent.querySelector("[data-save-client]");
   if (saveButton) {
     saveButton.addEventListener("click", () => {
-      updateClient(saveButton.getAttribute("data-save-client"), readClientFormPayload(elements.detailContent, selectedTab));
+      const clientId = saveButton.getAttribute("data-save-client");
+      const payload = readClientFormPayload(elements.detailContent, selectedTab);
+      if (selectedTab === "project") {
+        updateClientProject(clientId, payload);
+      } else {
+        updateClient(clientId, payload);
+      }
     });
   }
 
@@ -1616,6 +1712,37 @@ function renderClientDetail() {
       );
     });
   });
+
+  elements.detailContent.querySelectorAll("[data-project-task]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const row = checkbox.closest("[data-project-task-row]");
+      updateProjectTask(
+        client.clientId,
+        checkbox.getAttribute("data-project-phase"),
+        checkbox.getAttribute("data-project-task"),
+        {
+          checked: checkbox.checked,
+          note: row?.querySelector("[data-project-task-note]")?.value || "",
+        }
+      );
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-project-task-note]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const row = input.closest("[data-project-task-row]");
+      const checkbox = row?.querySelector("[data-project-task]");
+      updateProjectTask(
+        client.clientId,
+        input.getAttribute("data-project-phase"),
+        input.getAttribute("data-project-task-note"),
+        {
+          checked: Boolean(checkbox?.checked),
+          note: input.value || "",
+        }
+      );
+    });
+  });
 }
 
 function renderClientTabContent(client, activeTab) {
@@ -1639,12 +1766,28 @@ function renderClientTabContent(client, activeTab) {
   }
 
   if (activeTab === "project") {
+    const tracker = normalizeProjectTracker(client.projectTracker);
+    const progress = calculateProjectProgress(tracker);
+    const health = getProjectHealth(client, tracker);
+    const currentPhase = getCurrentProjectPhase(tracker);
+    const suggestedStatus = suggestProjectStatus(tracker);
     return `
       <section class="workflow-card">
-        <p class="detail-section-title">Project</p>
+        <div class="onboarding-summary">
+          <div>
+            <p class="detail-section-title">Project Delivery</p>
+            <strong>${escapeHtml(progress.completed)} of ${escapeHtml(progress.total)} tasks complete (${escapeHtml(progress.percentage)}%)</strong>
+            <p class="toolbar-subtle">Current phase: ${escapeHtml(currentPhase)}${suggestedStatus && suggestedStatus !== (client.projectStatus || "Client Onboarding") ? ` - Suggested status: ${escapeHtml(suggestedStatus)}` : ""}</p>
+          </div>
+          <span class="stage-chip">${escapeHtml(health)}</span>
+        </div>
+        <div class="onboarding-progress" aria-label="Project progress">
+          <span style="width: ${escapeAttribute(progress.percentage)}%"></span>
+        </div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Project Fields</p>
         <div class="workflow-form-grid">
-          ${renderClientInput("Project type", "projectType", client.projectType)}
-          ${renderClientInput("Package type", "packageType", client.packageType)}
           <label class="inline-field">
             <span>Project status</span>
             <select data-client-field="projectStatus">
@@ -1653,12 +1796,34 @@ function renderClientTabContent(client, activeTab) {
               ).join("")}
             </select>
           </label>
+          ${renderClientInput("Project type", "projectType", client.projectType)}
+          ${renderClientInput("Package type", "packageType", client.packageType)}
           ${renderClientInput("Start date", "startDate", client.startDate, "date")}
           ${renderClientInput("Target launch date", "targetLaunchDate", client.targetLaunchDate, "date")}
+          ${renderClientInput("Actual launch date", "actualLaunchDate", client.actualLaunchDate, "date")}
+          ${renderClientInput("Next project action", "nextProjectAction", client.nextProjectAction)}
+          <label class="inline-field">
+            <span>Is blocked</span>
+            <select data-client-field="isBlocked">
+              <option value="no" ${!client.isBlocked ? "selected" : ""}>No</option>
+              <option value="yes" ${client.isBlocked ? "selected" : ""}>Yes</option>
+            </select>
+          </label>
+          <label class="inline-field">
+            <span>Blocked by</span>
+            <select data-client-field="blockedBy">
+              ${["", "Client", "Internal", "Vendor", "Access", "Payment", "Other"].map(
+                (value) => `<option value="${escapeAttribute(value)}" ${value === (client.blockedBy || "") ? "selected" : ""}>${escapeHtml(value || "Not blocked")}</option>`
+              ).join("")}
+            </select>
+          </label>
         </div>
+        <textarea class="workflow-textarea" rows="3" data-client-field="currentBlocker" placeholder="Current blocker">${escapeHtml(client.currentBlocker || "")}</textarea>
         <textarea class="workflow-textarea" rows="4" data-client-field="internalNotes" placeholder="Internal project notes">${escapeHtml(client.internalNotes || "")}</textarea>
         <div class="workflow-actions"><button class="primary-btn" type="button" data-save-client="${escapeAttribute(client.clientId)}">Save Project</button></div>
       </section>
+      ${tracker.phases.map((phase) => renderProjectPhase(phase)).join("")}
+      ${renderClientActivity(client)}
     `;
   }
 
@@ -1736,6 +1901,69 @@ function renderOnboardingGroup(group) {
   `;
 }
 
+function renderProjectPhase(phase) {
+  return `
+    <section class="workflow-card onboarding-group">
+      <p class="detail-section-title">${escapeHtml(phase.title)}</p>
+      <div class="onboarding-list">
+        ${phase.items
+          .map(
+            (item) => `
+              <div class="onboarding-item" data-project-task-row>
+                <label class="onboarding-check">
+                  <input
+                    type="checkbox"
+                    ${item.checked ? "checked" : ""}
+                    data-project-phase="${escapeAttribute(phase.key)}"
+                    data-project-task="${escapeAttribute(item.key)}"
+                  />
+                  <span>${escapeHtml(item.label)}</span>
+                </label>
+                <input
+                  type="text"
+                  value="${escapeAttribute(item.note || "")}"
+                  placeholder="Note"
+                  data-project-phase="${escapeAttribute(phase.key)}"
+                  data-project-task-note="${escapeAttribute(item.key)}"
+                />
+                <small>${escapeHtml(item.updatedAt ? `Updated ${formatDateOnly(item.updatedAt)}` : "Not updated")}</small>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderClientActivity(client) {
+  const activity = Array.isArray(client.activity) ? client.activity.slice(0, 8) : [];
+  if (!activity.length) {
+    return "";
+  }
+
+  return `
+    <section class="workflow-card">
+      <p class="detail-section-title">Project Activity</p>
+      <div class="activity-list">
+        ${activity
+          .map(
+            (entry) => `
+              <div class="activity-item">
+                <span class="activity-dot"></span>
+                <div>
+                  <p>${escapeHtml(formatDateOnly(entry.createdAt))} - ${escapeHtml(entry.source || "Project")}</p>
+                  <strong>${escapeHtml(entry.message || "Project updated")}</strong>
+                </div>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderClientInput(label, field, value, type = "text") {
   return `
     <label class="inline-field">
@@ -1755,6 +1983,7 @@ function readClientFormPayload(container, activeTab) {
     payload.projectStatus = CLIENT_PROJECT_STATUSES.includes(payload.projectStatus)
       ? payload.projectStatus
       : "Client Onboarding";
+    payload.isBlocked = payload.isBlocked === "yes";
   }
 
   return payload;
@@ -2165,6 +2394,24 @@ function updateClient(clientId, updates = {}) {
   render();
 }
 
+function updateClientProject(clientId, updates = {}) {
+  const existing = state.clients.find((client) => client.clientId === clientId);
+  if (!existing) {
+    return;
+  }
+
+  const nextUpdates = { ...updates };
+  if (nextUpdates.isBlocked && nextUpdates.projectStatus !== "Blocked") {
+    const confirmed = window.confirm("Mark this project status as Blocked?");
+    if (confirmed) {
+      nextUpdates.projectStatus = "Blocked";
+      nextUpdates.activity = addClientActivity(existing, "Project moved to Blocked");
+    }
+  }
+
+  updateClient(clientId, nextUpdates);
+}
+
 function updateOnboardingItem(clientId, groupKey, itemKey, updates = {}) {
   const now = new Date().toISOString();
   state.clients = state.clients.map((client) => {
@@ -2197,6 +2444,64 @@ function updateOnboardingItem(clientId, groupKey, itemKey, updates = {}) {
     return {
       ...client,
       onboardingChecklist: nextChecklist,
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  renderDetail();
+}
+
+function updateProjectTask(clientId, phaseKey, taskKey, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const tracker = normalizeProjectTracker(client.projectTracker);
+    let checkedTask = null;
+    const nextTracker = {
+      ...tracker,
+      phases: tracker.phases.map((phase) =>
+        phase.key === phaseKey
+          ? {
+              ...phase,
+              items: phase.items.map((item) => {
+                if (item.key !== taskKey) {
+                  return item;
+                }
+
+                checkedTask = { ...item, checked: Boolean(updates.checked) };
+                return {
+                  ...item,
+                  checked: Boolean(updates.checked),
+                  note: String(updates.note || "").trim(),
+                  updatedAt: now,
+                };
+              }),
+            }
+          : phase
+      ),
+    };
+    const suggestedStatus = updates.checked ? suggestProjectStatus(nextTracker) : "";
+    const shouldMoveStatus =
+      suggestedStatus &&
+      compareProjectStatusPriority(suggestedStatus, client.projectStatus || "Client Onboarding") > 0;
+    const statusActivityMessage =
+      checkedTask?.label === "Website deployed" || checkedTask?.label === "Handover completed"
+        ? checkedTask.label
+        : `Project moved to ${suggestedStatus}`;
+    const activity = shouldMoveStatus
+      ? addClientActivity(client, statusActivityMessage)
+      : shouldRecordProjectActivity(checkedTask)
+        ? addClientActivity(client, checkedTask.label)
+        : client.activity || [];
+
+    return {
+      ...client,
+      projectTracker: nextTracker,
+      projectStatus: shouldMoveStatus ? suggestedStatus : client.projectStatus || "Client Onboarding",
+      activity,
       updatedAt: now,
     };
   });
@@ -3843,6 +4148,8 @@ function getClients() {
     ? parsed.map((client) => ({
         ...client,
         onboardingChecklist: normalizeOnboardingChecklist(client.onboardingChecklist),
+        projectTracker: normalizeProjectTracker(client.projectTracker),
+        activity: Array.isArray(client.activity) ? client.activity : [],
       }))
     : [];
 }
@@ -3882,9 +4189,127 @@ function createClientFromProspect(company) {
     notes: "",
     internalNotes: company.quote_internal_notes || "",
     onboardingChecklist: getDefaultOnboardingChecklist(),
+    projectTracker: getDefaultProjectTracker(),
+    currentBlocker: "",
+    nextProjectAction: "",
+    actualLaunchDate: "",
+    isBlocked: false,
+    blockedBy: "",
+    activity: [],
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function getDefaultProjectTracker() {
+  return {
+    phases: PROJECT_PHASES.map((phase) => ({
+      key: phase.key,
+      title: phase.title,
+      status: phase.status,
+      items: phase.items.map(([key, label, major = false, suggestedStatus = phase.status]) => ({
+        key,
+        label,
+        major: Boolean(major),
+        suggestedStatus,
+        checked: false,
+        note: "",
+        updatedAt: "",
+      })),
+    })),
+  };
+}
+
+function normalizeProjectTracker(tracker) {
+  const defaults = getDefaultProjectTracker();
+  const existingPhases = Array.isArray(tracker?.phases) ? tracker.phases : [];
+
+  return {
+    phases: defaults.phases.map((defaultPhase) => {
+      const existingPhase = existingPhases.find((phase) => phase?.key === defaultPhase.key) || {};
+      const existingItems = Array.isArray(existingPhase.items) ? existingPhase.items : [];
+
+      return {
+        ...defaultPhase,
+        items: defaultPhase.items.map((defaultItem) => {
+          const existingItem = existingItems.find((item) => item?.key === defaultItem.key) || {};
+          return {
+            ...defaultItem,
+            checked: Boolean(existingItem.checked),
+            note: String(existingItem.note || "").trim(),
+            updatedAt: existingItem.updatedAt || "",
+          };
+        }),
+      };
+    }),
+  };
+}
+
+function calculateProjectProgress(tracker) {
+  const items = normalizeProjectTracker(tracker).phases.flatMap((phase) => phase.items);
+  const total = items.length;
+  const completed = items.filter((item) => item.checked).length;
+  const percentage = total ? Math.round((completed / total) * 100) : 0;
+
+  return { completed, total, percentage };
+}
+
+function getProjectHealth(client, tracker) {
+  if ((client.projectStatus || "") === "Completed") {
+    return "Completed";
+  }
+
+  if ((client.projectStatus || "") === "Blocked" || client.isBlocked || String(client.currentBlocker || "").trim()) {
+    return "Blocked";
+  }
+
+  const targetDate = String(client.targetLaunchDate || "").slice(0, 10);
+  if (targetDate && targetDate < getTodayDateKey() && (client.projectStatus || "") !== "Completed") {
+    return "Needs Attention";
+  }
+
+  const progress = calculateProjectProgress(tracker);
+  return progress.percentage === 100 ? "Completed" : "On Track";
+}
+
+function getCurrentProjectPhase(tracker) {
+  const phases = normalizeProjectTracker(tracker).phases;
+  const activePhase = [...phases].reverse().find((phase) => phase.items.some((item) => item.checked));
+  return activePhase?.title || "Not Started";
+}
+
+function suggestProjectStatus(tracker) {
+  const phases = normalizeProjectTracker(tracker).phases;
+  const completedMajor = phases.flatMap((phase) => phase.items.filter((item) => item.checked && item.major));
+  const lastMajor = completedMajor.at(-1);
+  if (lastMajor?.suggestedStatus) {
+    return lastMajor.suggestedStatus;
+  }
+
+  const activePhase = [...phases].reverse().find((phase) => phase.items.some((item) => item.checked));
+  return activePhase?.status || "";
+}
+
+function compareProjectStatusPriority(left, right) {
+  const leftIndex = CLIENT_PROJECT_STATUSES.indexOf(left);
+  const rightIndex = CLIENT_PROJECT_STATUSES.indexOf(right);
+  return (leftIndex === -1 ? 0 : leftIndex) - (rightIndex === -1 ? 0 : rightIndex);
+}
+
+function shouldRecordProjectActivity(task) {
+  return Boolean(task?.major && task.checked);
+}
+
+function addClientActivity(client, message) {
+  return [
+    {
+      id: `client-activity-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      message,
+      source: "Project",
+    },
+    ...(Array.isArray(client.activity) ? client.activity : []),
+  ].slice(0, 50);
 }
 
 function getDefaultOnboardingChecklist() {
