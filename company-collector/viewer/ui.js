@@ -30,7 +30,7 @@ const QUOTE_PROJECT_TYPES = [
 ];
 const QUOTE_PACKAGE_TYPES = ["Starter", "Professional", "Premium", "Custom"];
 const FOLLOW_UP_PRIORITIES = ["Low", "Normal", "High"];
-const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received"]);
+const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received", "Client Onboarding"]);
 const COMMUNICATION_METHODS = ["Call", "Email", "SMS", "WhatsApp", "Onsite Visit", "LinkedIn", "Other"];
 const ACTIVITY_TYPES = [
   "Intro Email Sent",
@@ -140,6 +140,8 @@ export function renderDetailPanel({
   onMarkBadContact,
   onCopyContactEmail,
   onCopyContactPhone,
+  onConvertToClient,
+  onOpenClientProfile,
 }) {
   if (!company) {
     container.innerHTML = `
@@ -161,6 +163,8 @@ export function renderDetailPanel({
   const statusMeta = getScanStatusMeta(company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = company.scan_failure_reason || "";
   const prospectStage = getProspectStage(company);
+  const existingClientId = String(company.clientId || "").trim();
+  const canConvertToClient = isProspectEligibleForClientConversion(company);
 
   container.innerHTML = `
     <div class="detail-header">
@@ -200,9 +204,11 @@ export function renderDetailPanel({
       }
       <button class="secondary-btn" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
       ${
-        CONVERTIBLE_STAGES.has(prospectStage)
-          ? `<button class="secondary-btn" type="button" title="Client credential, document, and payment storage will be added later.">Convert to Client</button>`
-          : ""
+        existingClientId
+          ? `<button class="primary-btn" type="button" data-open-client-profile="${escapeAttribute(existingClientId)}">Open Client Profile</button>`
+          : canConvertToClient
+            ? `<button class="primary-btn" type="button" data-convert-to-client="${escapeAttribute(company.id)}">Convert to Client</button>`
+            : `<span class="toolbar-subtle">Available after quote acceptance or contract progress.</span>`
       }
     </div>
 
@@ -361,6 +367,16 @@ export function renderDetailPanel({
     rejectedQuoteButton.addEventListener("click", () =>
       onMarkQuoteRejected(rejectedQuoteButton.getAttribute("data-company-id"), readQuotePayload(container))
     );
+  }
+
+  const convertButton = container.querySelector("[data-convert-to-client]");
+  if (convertButton) {
+    convertButton.addEventListener("click", () => onConvertToClient(convertButton.getAttribute("data-convert-to-client")));
+  }
+
+  const openClientButton = container.querySelector("[data-open-client-profile]");
+  if (openClientButton) {
+    openClientButton.addEventListener("click", () => onOpenClientProfile(openClientButton.getAttribute("data-open-client-profile")));
   }
 
   const toneSelect = container.querySelector("[data-outreach-tone]");
@@ -2059,7 +2075,7 @@ function getSuggestedNextAction(company) {
   }
 
   if (CONVERTIBLE_STAGES.has(stage)) {
-    return "Convert to Client placeholder is available. Full client storage is not built yet.";
+    return "Create a client profile when the agreement is ready.";
   }
 
   return "Update communication status after the next touchpoint.";
@@ -2131,13 +2147,22 @@ function normalizeSavedKey(value) {
 }
 
 function renderConversionPlaceholder(company) {
-  const stage = getProspectStage(company);
+  const existingClientId = String(company?.clientId || "").trim();
 
-  if (!CONVERTIBLE_STAGES.has(stage)) {
+  if (existingClientId) {
+    return `
+      <div class="overview-card">
+        <span class="overview-label">Client profile</span>
+        <strong>Linked to client record.</strong>
+      </div>
+    `;
+  }
+
+  if (!isProspectEligibleForClientConversion(company)) {
     return `
       <div class="overview-card">
         <span class="overview-label">Convert to Client</span>
-        <strong>Available only after Contract Expected or Contract Received.</strong>
+        <strong>Available after quote acceptance or contract progress.</strong>
       </div>
     `;
   }
@@ -2145,9 +2170,19 @@ function renderConversionPlaceholder(company) {
   return `
     <div class="overview-card">
       <span class="overview-label">Convert to Client</span>
-      <strong>Placeholder only - onboarding, credential, document, and payment storage will be added later.</strong>
+      <strong>Ready to create an active client profile.</strong>
     </div>
   `;
+}
+
+function isProspectEligibleForClientConversion(company) {
+  const milestones = company?.milestones && typeof company.milestones === "object" ? company.milestones : {};
+  return (
+    CONVERTIBLE_STAGES.has(getProspectStage(company)) ||
+    String(company?.quote_status || "").trim() === "Accepted" ||
+    Boolean(milestones["Contract received"]) ||
+    Boolean(milestones["Advance payment received"])
+  );
 }
 
 function formatDetailTab(value) {

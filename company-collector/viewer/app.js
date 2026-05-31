@@ -7,6 +7,7 @@ const DEFAULT_STATE = "TX";
 const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
 const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
 const PROSPECT_WORKFLOWS_KEY = "find-any-company.prospect-workflows";
+const CLIENTS_KEY = "find-any-company.clients";
 const MANUAL_PROSPECTS_KEY = "find-any-company.manual-prospects";
 const HIDDEN_PROSPECTS_KEY = "find-any-company.hidden-prospects";
 const SENDER_PROFILE_KEY = "find-any-company.sender-profile";
@@ -76,6 +77,22 @@ const PROSPECT_STAGES = [
   "Archived",
 ];
 const QUOTE_STATUSES = ["Not Started", "Quote Requested", "Drafting", "Sent", "Under Review", "Accepted", "Rejected"];
+const CLIENT_PROJECT_STATUSES = [
+  "Client Onboarding",
+  "Discovery",
+  "Content Collection",
+  "Design",
+  "Development",
+  "Client Review",
+  "Revision",
+  "Final Approval",
+  "Go Live",
+  "Handover",
+  "Maintenance",
+  "Completed",
+  "Paused",
+];
+const CLIENT_TABS = ["overview", "project", "documents", "payments", "credentials", "handover", "support"];
 
 const state = {
   companies: [],
@@ -89,8 +106,11 @@ const state = {
   loading: false,
   sortBy: "best_match",
   activeDetailTab: "overview",
+  selectedClientId: null,
+  activeClientTab: "overview",
   savedSearches: loadSavedSearches(),
   savedCompanies: loadSavedCompanies(),
+  clients: getClients(),
   hiddenProspects: loadHiddenProspects(),
   prospectWorkflows: loadProspectWorkflows(),
   manualProspects: loadManualProspects(),
@@ -886,17 +906,23 @@ function paginate() {
 
 function render() {
   const isSavedView = state.activeView === "saved";
-  elements.resultCount.textContent = String(state.filteredCompanies.length);
+  const isClientsView = state.activeView === "clients";
+  const visibleCount = isClientsView ? state.clients.length : state.filteredCompanies.length;
+  elements.resultCount.textContent = String(visibleCount);
   elements.resultsSubtitle.textContent = buildResultsSubtitle();
-  elements.resultsTitle.textContent = isSavedView ? "Saved Prospects Work Queue" : "Discovery Results";
+  elements.resultsTitle.textContent = isClientsView
+    ? "Clients"
+    : isSavedView
+      ? "Saved Prospects Work Queue"
+      : "Discovery Results";
   elements.workflowDashboard.classList.toggle("hidden", !isSavedView);
   elements.savedWorkqueueFilters?.classList.toggle("hidden", !isSavedView);
-  elements.emptyState.classList.toggle("hidden", state.filteredCompanies.length > 0 || state.loading);
-  elements.resultsContainer.classList.toggle("hidden", state.filteredCompanies.length === 0);
+  elements.emptyState.classList.toggle("hidden", visibleCount > 0 || state.loading);
+  elements.resultsContainer.classList.toggle("hidden", visibleCount === 0);
   elements.loadingState.classList.toggle("hidden", !state.loading);
-  elements.pageIndicator.textContent = `Page ${state.currentPage} of ${getTotalPages()}`;
-  elements.prevPageButton.disabled = state.currentPage <= 1;
-  elements.nextPageButton.disabled = state.currentPage >= getTotalPages();
+  elements.pageIndicator.textContent = isClientsView ? "Clients" : `Page ${state.currentPage} of ${getTotalPages()}`;
+  elements.prevPageButton.disabled = isClientsView || state.currentPage <= 1;
+  elements.nextPageButton.disabled = isClientsView || state.currentPage >= getTotalPages();
   elements.listViewButton?.classList.toggle("active", state.viewMode === "list");
   elements.gridViewButton?.classList.toggle("active", state.viewMode === "grid");
   elements.scanVisibleButton.disabled =
@@ -907,20 +933,24 @@ function render() {
   elements.cancelQueueButton.disabled =
     (!state.bulkScan.running && !state.bulkScan.paused) || !state.bulkScan.queue.length;
 
-  renderResultsView({
-    companies: state.pagedCompanies,
-    container: elements.resultsContainer,
-    viewMode: state.viewMode,
-    scanner,
-    selectedCompanyId: state.selectedCompanyId,
-    savedCompanies: state.savedCompanies,
-    onOpenDetails: openDetails,
-    onScanCompany: handleScanCompany,
-    onRetryScan: handleRetryScan,
-    onToggleSavedCompany: toggleSavedCompany,
-    onHideCompany: hideCompany,
-    mode: state.activeView,
-  });
+  if (isClientsView) {
+    renderClientsView();
+  } else {
+    renderResultsView({
+      companies: state.pagedCompanies,
+      container: elements.resultsContainer,
+      viewMode: state.viewMode,
+      scanner,
+      selectedCompanyId: state.selectedCompanyId,
+      savedCompanies: state.savedCompanies,
+      onOpenDetails: openDetails,
+      onScanCompany: handleScanCompany,
+      onRetryScan: handleRetryScan,
+      onToggleSavedCompany: toggleSavedCompany,
+      onHideCompany: hideCompany,
+      mode: state.activeView,
+    });
+  }
 
   elements.appViewButtons.forEach((button) => {
     button.classList.toggle("active", (button.getAttribute("data-app-view") || "discovery") === state.activeView);
@@ -930,6 +960,56 @@ function render() {
   renderTodayFollowups();
   renderBatchProgress();
   renderBulkProgress();
+}
+
+function renderClientsView() {
+  const clients = [...state.clients].sort((left, right) =>
+    String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
+  );
+
+  elements.resultsContainer.className = "results-container list-view";
+  elements.resultsContainer.innerHTML = clients.length
+    ? `
+      <div class="prospect-list-shell">
+        <div class="prospect-list-head">
+          <span>Business</span>
+          <span>Project</span>
+          <span>Client</span>
+          <span>Actions</span>
+        </div>
+        <div class="prospect-list">
+          ${clients.map((client) => renderClientRow(client)).join("")}
+        </div>
+      </div>
+    `
+    : "";
+
+  elements.resultsContainer.querySelectorAll("[data-open-client]").forEach((button) => {
+    button.addEventListener("click", () => openClientProfile(button.getAttribute("data-open-client")));
+  });
+}
+
+function renderClientRow(client) {
+  return `
+    <article class="prospect-row ${client.clientId === state.selectedClientId ? "selected" : ""}">
+      <button class="prospect-main" type="button" data-open-client="${escapeAttribute(client.clientId)}">
+        <span class="row-title">${escapeHtml(client.businessName || "NA")}</span>
+        <span class="row-subtitle">${escapeHtml(client.businessType || "NA")} - ${escapeHtml(client.phone || "No phone")}</span>
+        <span class="row-subtitle">Created ${escapeHtml(formatDateOnly(client.createdAt))}</span>
+      </button>
+      <div class="prospect-fit">
+        <span class="stage-chip">${escapeHtml(client.projectStatus || "Client Onboarding")}</span>
+        <span class="row-subtitle">${escapeHtml(client.currentClientStatus || "Active Client")}</span>
+      </div>
+      <div class="prospect-signals">
+        <span>${escapeHtml(client.email || "No email")}</span>
+        <span>${escapeHtml([client.city, client.state].filter(Boolean).join(", ") || "Location not set")}</span>
+      </div>
+      <div class="prospect-actions">
+        <button class="secondary-btn" type="button" data-open-client="${escapeAttribute(client.clientId)}">Open</button>
+      </div>
+    </article>
+  `;
 }
 
 function toggleFiltersMenu() {
@@ -1310,6 +1390,7 @@ async function handleReviewUpdate(payload, reviewStatus) {
 
 function openDetails(companyId) {
   state.selectedCompanyId = companyId;
+  state.selectedClientId = null;
   elements.detailModal.classList.remove("hidden");
   elements.detailModal.setAttribute("aria-hidden", "false");
   renderDetail();
@@ -1319,10 +1400,22 @@ function openDetails(companyId) {
 function closeDetails() {
   elements.detailModal.classList.add("hidden");
   elements.detailModal.setAttribute("aria-hidden", "true");
+  state.selectedClientId = null;
 }
 
 function renderDetail() {
+  if (state.selectedClientId) {
+    renderClientDetail();
+    return;
+  }
+
   const company = state.companies.find((item) => item.id === state.selectedCompanyId) || null;
+  if (company) {
+    const linkedClient = getClientByProspect(company);
+    if (linkedClient && !company.clientId) {
+      company.clientId = linkedClient.clientId;
+    }
+  }
 
   renderDetailPanel({
     company,
@@ -1358,7 +1451,142 @@ function renderDetail() {
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
     onCopyContactEmail: (payload) => copyToClipboard(payload.email, "Email copied."),
     onCopyContactPhone: (payload) => copyToClipboard(payload.phone, "Phone copied."),
+    onConvertToClient: convertProspectToClient,
+    onOpenClientProfile: openClientProfile,
   });
+}
+
+function renderClientDetail() {
+  const client = state.clients.find((item) => item.clientId === state.selectedClientId) || null;
+  if (!client) {
+    elements.detailContent.innerHTML = `
+      <div class="detail-empty">
+        <p class="detail-empty-eyebrow">Client profile</p>
+        <h2>Client not found</h2>
+        <p>The linked client record could not be found in localStorage.</p>
+      </div>
+    `;
+    return;
+  }
+
+  const selectedTab = CLIENT_TABS.includes(state.activeClientTab) ? state.activeClientTab : "overview";
+  elements.detailContent.innerHTML = `
+    <div class="detail-header">
+      <div>
+        <p class="detail-eyebrow">Client profile</p>
+        <h2 id="detail-modal-title">${escapeHtml(client.businessName || "NA")}</h2>
+        <p class="detail-location">${escapeHtml([client.city, client.state].filter(Boolean).join(", ") || client.address || "NA")}</p>
+      </div>
+      <span class="status-pill status-success"><span class="status-dot"></span>${escapeHtml(client.currentClientStatus || "Active Client")}</span>
+    </div>
+    <div class="detail-tag-row">
+      <span class="detail-tag">${escapeHtml(client.businessType || "Business")}</span>
+      <span class="detail-tag">${escapeHtml(client.projectStatus || "Client Onboarding")}</span>
+      <span class="detail-tag">Created ${escapeHtml(formatDateOnly(client.createdAt))}</span>
+    </div>
+    <div class="detail-tabs">
+      ${CLIENT_TABS.map(
+        (tab) => `
+          <button class="detail-tab ${selectedTab === tab ? "active" : ""}" type="button" data-client-tab="${escapeAttribute(tab)}">
+            ${escapeHtml(titleCase(tab))}
+          </button>
+        `
+      ).join("")}
+    </div>
+    <div class="detail-body">
+      ${renderClientTabContent(client, selectedTab)}
+    </div>
+  `;
+
+  elements.detailContent.querySelectorAll("[data-client-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeClientTab = button.getAttribute("data-client-tab") || "overview";
+      renderDetail();
+    });
+  });
+
+  const saveButton = elements.detailContent.querySelector("[data-save-client]");
+  if (saveButton) {
+    saveButton.addEventListener("click", () => {
+      updateClient(saveButton.getAttribute("data-save-client"), readClientFormPayload(elements.detailContent, selectedTab));
+    });
+  }
+}
+
+function renderClientTabContent(client, activeTab) {
+  if (activeTab === "overview") {
+    return `
+      <section class="workflow-card">
+        <p class="detail-section-title">Overview</p>
+        <div class="workflow-form-grid">
+          ${renderClientInput("Business name", "businessName", client.businessName)}
+          ${renderClientInput("Owner/manager name", "ownerOrManagerName", client.ownerOrManagerName)}
+          ${renderClientInput("Phone", "phone", client.phone)}
+          ${renderClientInput("Email", "email", client.email, "email")}
+          ${renderClientInput("Address", "address", client.address)}
+          ${renderClientInput("Business type", "businessType", client.businessType)}
+          ${renderClientInput("Website URL", "websiteUrl", client.websiteUrl, "url")}
+        </div>
+        <textarea class="workflow-textarea" rows="4" data-client-field="notes" placeholder="Client notes">${escapeHtml(client.notes || "")}</textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-save-client="${escapeAttribute(client.clientId)}">Save Overview</button></div>
+      </section>
+    `;
+  }
+
+  if (activeTab === "project") {
+    return `
+      <section class="workflow-card">
+        <p class="detail-section-title">Project</p>
+        <div class="workflow-form-grid">
+          ${renderClientInput("Project type", "projectType", client.projectType)}
+          ${renderClientInput("Package type", "packageType", client.packageType)}
+          <label class="inline-field">
+            <span>Project status</span>
+            <select data-client-field="projectStatus">
+              ${CLIENT_PROJECT_STATUSES.map(
+                (status) => `<option value="${escapeAttribute(status)}" ${status === (client.projectStatus || "Client Onboarding") ? "selected" : ""}>${escapeHtml(status)}</option>`
+              ).join("")}
+            </select>
+          </label>
+          ${renderClientInput("Start date", "startDate", client.startDate, "date")}
+          ${renderClientInput("Target launch date", "targetLaunchDate", client.targetLaunchDate, "date")}
+        </div>
+        <textarea class="workflow-textarea" rows="4" data-client-field="internalNotes" placeholder="Internal project notes">${escapeHtml(client.internalNotes || "")}</textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-save-client="${escapeAttribute(client.clientId)}">Save Project</button></div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="workflow-card">
+      <p class="detail-section-title">${escapeHtml(titleCase(activeTab))}</p>
+      <p class="toolbar-subtle">Coming in next tasks.</p>
+    </section>
+  `;
+}
+
+function renderClientInput(label, field, value, type = "text") {
+  return `
+    <label class="inline-field">
+      <span>${escapeHtml(label)}</span>
+      <input type="${escapeAttribute(type)}" value="${escapeAttribute(value || "")}" data-client-field="${escapeAttribute(field)}" />
+    </label>
+  `;
+}
+
+function readClientFormPayload(container, activeTab) {
+  const payload = {};
+  container.querySelectorAll("[data-client-field]").forEach((field) => {
+    payload[field.getAttribute("data-client-field")] = field.value || "";
+  });
+
+  if (activeTab === "project") {
+    payload.projectStatus = CLIENT_PROJECT_STATUSES.includes(payload.projectStatus)
+      ? payload.projectStatus
+      : "Client Onboarding";
+  }
+
+  return payload;
 }
 
 function handleDetailTabChange(tab) {
@@ -1675,6 +1903,95 @@ function updateProspectStatus(companyId, nextStatus) {
   elements.statusMessage.textContent = `Updated ${company.name || "prospect"} status to ${nextStatus}.`;
   updateSummary();
   applyFilters();
+}
+
+function convertProspectToClient(companyId) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  const existingClient = getClientByProspect(company);
+  if (existingClient) {
+    linkProspectToClient(company, existingClient.clientId);
+    openClientProfile(existingClient.clientId);
+    return;
+  }
+
+  if (!isProspectEligibleForClientConversion(company)) {
+    elements.statusMessage.textContent = "Client conversion is available after quote acceptance or contract progress.";
+    return;
+  }
+
+  const confirmed = window.confirm(
+    "Create a client profile from this prospect? The prospect will stay saved and linked to the new client record."
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const client = createClientFromProspect(company);
+  state.clients = [client, ...state.clients];
+  saveClients();
+  linkProspectToClient(company, client.clientId);
+  recordProspectActivity(company.id, "Converted to client", "Manual", "converted-to-client");
+  elements.statusMessage.textContent = `Created client profile for ${client.businessName || "client"}.`;
+  openClientProfile(client.clientId);
+}
+
+function linkProspectToClient(company, clientId) {
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(company.id);
+  const currentStage = normalizeProspectStage(
+    workflow.currentStage || workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"
+  );
+  const nextStage = applyStageUpdate(currentStage, "Client Onboarding");
+  const now = new Date().toISOString();
+  state.prospectWorkflows[company.id] = {
+    ...workflow,
+    clientId,
+    currentStage: nextStage,
+    prospect_stage: nextStage,
+    stageUpdateSource: nextStage !== currentStage ? "client-conversion" : workflow.stageUpdateSource || "",
+    stageUpdatedAt: nextStage !== currentStage ? now : workflow.stageUpdatedAt || "",
+    updated_at: now,
+    lastUpdatedAt: now,
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+}
+
+function openClientProfile(clientId) {
+  const client = state.clients.find((item) => item.clientId === clientId);
+  if (!client) {
+    elements.statusMessage.textContent = "Client profile was not found.";
+    return;
+  }
+
+  state.selectedClientId = client.clientId;
+  state.selectedCompanyId = null;
+  state.activeClientTab = "overview";
+  elements.detailModal.classList.remove("hidden");
+  elements.detailModal.setAttribute("aria-hidden", "false");
+  render();
+}
+
+function updateClient(clientId, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) =>
+    client.clientId === clientId
+      ? {
+          ...client,
+          ...updates,
+          currentClientStatus: updates.currentClientStatus || client.currentClientStatus || "Active Client",
+          projectStatus: updates.projectStatus || client.projectStatus || "Client Onboarding",
+          updatedAt: now,
+        }
+      : client
+  );
+  saveClients();
+  elements.statusMessage.textContent = "Client profile saved.";
+  render();
 }
 
 function addCommunicationEntry(payload) {
@@ -3285,6 +3602,7 @@ function applyProspectWorkflow(company) {
     is_saved_prospect: Boolean(findSavedProspectId(company)),
     archived: Boolean(workflow.archived || company.archived),
     archived_at: workflow.archived_at || company.archived_at || "",
+    clientId: workflow.clientId || company.clientId || "",
     workflow_updated_at: workflow.updated_at || "",
     manual_stage_override: Boolean(workflow.manual_stage_override),
     currentStage: normalizeProspectStage(
@@ -3307,6 +3625,77 @@ function applyProspectWorkflow(company) {
   company.is_hidden = isProspectHidden(company);
 
   return company;
+}
+
+function getClients() {
+  const parsed = readLocalJson(CLIENTS_KEY, []);
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function saveClients() {
+  writeLocalJson(CLIENTS_KEY, state.clients);
+}
+
+function createClientFromProspect(company) {
+  const now = new Date().toISOString();
+  const primaryContact = company.primary_contact || {};
+  const clientId = `client-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const dedupeKey = getProspectDedupeKey(company);
+
+  return {
+    clientId,
+    prospectId: company.id || "",
+    dedupeKey,
+    businessName: company.name || company.businessName || "",
+    businessType: company.industry || company.keyword || company.businessType || "",
+    ownerOrManagerName: primaryContact.name || company.ownerOrManagerName || "",
+    phone: company.phone || primaryContact.phone || "",
+    email: company.email || primaryContact.email || "",
+    address: company.address || "",
+    city: company.city || "",
+    state: company.state || "",
+    websiteUrl: company.website || company.websiteUrl || "",
+    googleProfileUrl: company.source_url || company.googleProfileUrl || "",
+    mapsUrl: company.mapsUrl || company.google_maps_url || company.googleMapsUrl || company.source_url || "",
+    sourceProspectData: { ...company },
+    currentClientStatus: "Active Client",
+    projectStatus: "Client Onboarding",
+    projectType: company.quote_project_type || "",
+    packageType: company.quote_package_type || "",
+    startDate: "",
+    targetLaunchDate: "",
+    notes: "",
+    internalNotes: company.quote_internal_notes || "",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function getClientByProspect(company) {
+  if (!company) {
+    return null;
+  }
+
+  const prospectId = String(company.id || "").trim();
+  const dedupeKey = getProspectDedupeKey(company);
+  const linkedClientId = String(company.clientId || getProspectWorkflow(company.id)?.clientId || "").trim();
+  return (
+    state.clients.find((client) => linkedClientId && client.clientId === linkedClientId) ||
+    state.clients.find((client) => prospectId && client.prospectId === prospectId) ||
+    state.clients.find((client) => dedupeKey && client.dedupeKey === dedupeKey) ||
+    null
+  );
+}
+
+function isProspectEligibleForClientConversion(company) {
+  const milestones = company?.milestones && typeof company.milestones === "object" ? company.milestones : {};
+  const stage = normalizeProspectStage(company?.currentStage || company?.prospect_stage || company?.stage || "New Lead");
+  return (
+    ["Contract Expected", "Contract Received", "Client Onboarding"].includes(stage) ||
+    String(company?.quote_status || "").trim() === "Accepted" ||
+    Boolean(milestones["Contract received"]) ||
+    Boolean(milestones["Advance payment received"])
+  );
 }
 
 function buildQualificationReasonChips(company) {
@@ -3931,6 +4320,10 @@ function isUpcomingThisWeek(dateValue) {
 
 function buildResultsSubtitle() {
   const filters = getActiveFilters();
+  if (state.activeView === "clients") {
+    return `${state.clients.length} client${state.clients.length === 1 ? "" : "s"} in localStorage.`;
+  }
+
   if (state.activeView === "saved") {
     return `${state.filteredCompanies.length} saved prospect${state.filteredCompanies.length === 1 ? "" : "s"} sorted for follow-up and conversion work.`;
   }
@@ -4542,6 +4935,7 @@ function syncPresetChips() {
   elements.appViewButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeView = button.getAttribute("data-app-view") || "discovery";
+      state.selectedClientId = null;
       state.currentPage = 1;
       applyFilters();
     });
@@ -4759,4 +5153,19 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value);
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .replace(/[_-]/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatDateOnly(value) {
+  if (!value) {
+    return "NA";
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "NA" : date.toLocaleDateString();
 }
