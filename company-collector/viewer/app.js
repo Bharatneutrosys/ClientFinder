@@ -92,7 +92,72 @@ const CLIENT_PROJECT_STATUSES = [
   "Completed",
   "Paused",
 ];
-const CLIENT_TABS = ["overview", "project", "documents", "payments", "credentials", "handover", "support"];
+const CLIENT_TABS = ["overview", "project", "onboarding", "documents", "payments", "credentials", "handover", "support"];
+const ONBOARDING_CHECKLIST_GROUPS = [
+  {
+    key: "businessInformation",
+    title: "Business Information",
+    items: [
+      ["businessName", "Confirm business legal/display name"],
+      ["ownerContact", "Confirm owner/manager contact", true],
+      ["phone", "Confirm phone number"],
+      ["email", "Confirm email"],
+      ["address", "Confirm address"],
+      ["businessHours", "Confirm business hours", true],
+      ["serviceArea", "Confirm service area"],
+    ],
+  },
+  {
+    key: "brandContent",
+    title: "Brand & Content",
+    items: [
+      ["logo", "Collect logo"],
+      ["brandColors", "Collect brand colors"],
+      ["serviceList", "Collect service list", true],
+      ["pricingPackages", "Collect pricing/packages"],
+      ["businessPhotos", "Collect business photos"],
+      ["gallerySamples", "Collect gallery/work samples"],
+      ["testimonials", "Collect testimonials/reviews"],
+      ["aboutStory", "Collect about/business story"],
+    ],
+  },
+  {
+    key: "digitalAccess",
+    title: "Digital Access",
+    items: [
+      ["domainAccess", "Domain access received"],
+      ["hostingAccess", "Hosting access received"],
+      ["websiteAccess", "Existing website access received"],
+      ["googleBusinessProfile", "Google Business Profile access discussed"],
+      ["socialLinks", "Social media links collected"],
+      ["bookingPlatform", "Booking platform link/access collected"],
+    ],
+  },
+  {
+    key: "projectSetup",
+    title: "Project Setup",
+    items: [
+      ["scopeConfirmed", "Project scope confirmed", true],
+      ["quoteConfirmed", "Quote/price confirmed"],
+      ["timelineConfirmed", "Timeline confirmed"],
+      ["paymentTermsConfirmed", "Payment terms confirmed", true],
+      ["advancePaymentConfirmed", "Advance payment confirmed", true],
+      ["contractReceived", "Contract received", true],
+      ["kickoffCompleted", "Kickoff completed"],
+    ],
+  },
+  {
+    key: "approvals",
+    title: "Approvals",
+    items: [
+      ["homepageApproved", "Homepage direction approved"],
+      ["servicesContentApproved", "Services/content approved"],
+      ["galleryApproved", "Gallery/images approved"],
+      ["contactFlowApproved", "Contact/booking flow approved"],
+      ["launchApprovalPending", "Final launch approval pending"],
+    ],
+  },
+];
 
 const state = {
   companies: [],
@@ -1469,6 +1534,9 @@ function renderClientDetail() {
     return;
   }
 
+  client.onboardingChecklist = normalizeOnboardingChecklist(client.onboardingChecklist);
+  const onboardingProgress = calculateOnboardingProgress(client.onboardingChecklist);
+  const missingCriticalItems = getMissingCriticalItems(client.onboardingChecklist);
   const selectedTab = CLIENT_TABS.includes(state.activeClientTab) ? state.activeClientTab : "overview";
   elements.detailContent.innerHTML = `
     <div class="detail-header">
@@ -1482,8 +1550,14 @@ function renderClientDetail() {
     <div class="detail-tag-row">
       <span class="detail-tag">${escapeHtml(client.businessType || "Business")}</span>
       <span class="detail-tag">${escapeHtml(client.projectStatus || "Client Onboarding")}</span>
+      <span class="detail-tag">Onboarding ${escapeHtml(onboardingProgress.percentage)}%</span>
       <span class="detail-tag">Created ${escapeHtml(formatDateOnly(client.createdAt))}</span>
     </div>
+    ${
+      missingCriticalItems.length
+        ? `<p class="workflow-note">Onboarding has missing critical items.</p>`
+        : ""
+    }
     <div class="detail-tabs">
       ${CLIENT_TABS.map(
         (tab) => `
@@ -1511,6 +1585,37 @@ function renderClientDetail() {
       updateClient(saveButton.getAttribute("data-save-client"), readClientFormPayload(elements.detailContent, selectedTab));
     });
   }
+
+  elements.detailContent.querySelectorAll("[data-onboarding-item]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const row = checkbox.closest("[data-onboarding-row]");
+      updateOnboardingItem(
+        client.clientId,
+        checkbox.getAttribute("data-onboarding-group"),
+        checkbox.getAttribute("data-onboarding-item"),
+        {
+          checked: checkbox.checked,
+          note: row?.querySelector("[data-onboarding-note]")?.value || "",
+        }
+      );
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-onboarding-note]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const row = input.closest("[data-onboarding-row]");
+      const checkbox = row?.querySelector("[data-onboarding-item]");
+      updateOnboardingItem(
+        client.clientId,
+        input.getAttribute("data-onboarding-group"),
+        input.getAttribute("data-onboarding-note"),
+        {
+          checked: Boolean(checkbox?.checked),
+          note: input.value || "",
+        }
+      );
+    });
+  });
 }
 
 function renderClientTabContent(client, activeTab) {
@@ -1557,10 +1662,76 @@ function renderClientTabContent(client, activeTab) {
     `;
   }
 
+  if (activeTab === "onboarding") {
+    const checklist = normalizeOnboardingChecklist(client.onboardingChecklist);
+    const progress = calculateOnboardingProgress(checklist);
+    const missingCriticalItems = getMissingCriticalItems(checklist);
+    return `
+      <section class="workflow-card">
+        <div class="onboarding-summary">
+          <div>
+            <p class="detail-section-title">Onboarding</p>
+            <strong>${escapeHtml(progress.completed)} of ${escapeHtml(progress.total)} complete (${escapeHtml(progress.percentage)}%)</strong>
+            ${
+              progress.percentage === 100
+                ? `<p class="toolbar-subtle">Onboarding is complete. Consider moving project status to Discovery or Content Collection.</p>`
+                : missingCriticalItems.length
+                  ? `<p class="toolbar-subtle">Missing critical: ${escapeHtml(missingCriticalItems.slice(0, 4).join(", "))}${missingCriticalItems.length > 4 ? "..." : ""}</p>`
+                  : `<p class="toolbar-subtle">Track client materials, access, approvals, and setup before build starts.</p>`
+            }
+          </div>
+          <span class="stage-chip">${escapeHtml(getOnboardingStatus(progress, missingCriticalItems))}</span>
+        </div>
+        <div class="onboarding-progress" aria-label="Onboarding progress">
+          <span style="width: ${escapeAttribute(progress.percentage)}%"></span>
+        </div>
+      </section>
+      ${checklist.groups.map((group) => renderOnboardingGroup(group)).join("")}
+    `;
+  }
+
   return `
     <section class="workflow-card">
       <p class="detail-section-title">${escapeHtml(titleCase(activeTab))}</p>
       <p class="toolbar-subtle">Coming in next tasks.</p>
+    </section>
+  `;
+}
+
+function renderOnboardingGroup(group) {
+  return `
+    <section class="workflow-card onboarding-group">
+      <p class="detail-section-title">${escapeHtml(group.title)}</p>
+      <div class="onboarding-list">
+        ${group.items
+          .map(
+            (item) => `
+              <div class="onboarding-item" data-onboarding-row>
+                <label class="onboarding-check">
+                  <input
+                    type="checkbox"
+                    ${item.checked ? "checked" : ""}
+                    data-onboarding-group="${escapeAttribute(group.key)}"
+                    data-onboarding-item="${escapeAttribute(item.key)}"
+                  />
+                  <span>
+                    ${escapeHtml(item.label)}
+                    ${item.critical ? `<em>Critical</em>` : ""}
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  value="${escapeAttribute(item.note || "")}"
+                  placeholder="Note"
+                  data-onboarding-group="${escapeAttribute(group.key)}"
+                  data-onboarding-note="${escapeAttribute(item.key)}"
+                />
+                <small>${escapeHtml(item.updatedAt ? `Updated ${formatDateOnly(item.updatedAt)}` : "Not updated")}</small>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
     </section>
   `;
 }
@@ -1992,6 +2163,45 @@ function updateClient(clientId, updates = {}) {
   saveClients();
   elements.statusMessage.textContent = "Client profile saved.";
   render();
+}
+
+function updateOnboardingItem(clientId, groupKey, itemKey, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const checklist = normalizeOnboardingChecklist(client.onboardingChecklist);
+    const nextChecklist = {
+      ...checklist,
+      groups: checklist.groups.map((group) =>
+        group.key === groupKey
+          ? {
+              ...group,
+              items: group.items.map((item) =>
+                item.key === itemKey
+                  ? {
+                      ...item,
+                      checked: Boolean(updates.checked),
+                      note: String(updates.note || "").trim(),
+                      updatedAt: now,
+                    }
+                  : item
+              ),
+            }
+          : group
+      ),
+    };
+
+    return {
+      ...client,
+      onboardingChecklist: nextChecklist,
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  renderDetail();
 }
 
 function addCommunicationEntry(payload) {
@@ -3629,7 +3839,12 @@ function applyProspectWorkflow(company) {
 
 function getClients() {
   const parsed = readLocalJson(CLIENTS_KEY, []);
-  return Array.isArray(parsed) ? parsed : [];
+  return Array.isArray(parsed)
+    ? parsed.map((client) => ({
+        ...client,
+        onboardingChecklist: normalizeOnboardingChecklist(client.onboardingChecklist),
+      }))
+    : [];
 }
 
 function saveClients() {
@@ -3666,9 +3881,89 @@ function createClientFromProspect(company) {
     targetLaunchDate: "",
     notes: "",
     internalNotes: company.quote_internal_notes || "",
+    onboardingChecklist: getDefaultOnboardingChecklist(),
     createdAt: now,
     updatedAt: now,
   };
+}
+
+function getDefaultOnboardingChecklist() {
+  return {
+    groups: ONBOARDING_CHECKLIST_GROUPS.map((group) => ({
+      key: group.key,
+      title: group.title,
+      items: group.items.map(([key, label, critical = false]) => ({
+        key,
+        label,
+        critical: Boolean(critical),
+        checked: false,
+        note: "",
+        updatedAt: "",
+      })),
+    })),
+  };
+}
+
+function normalizeOnboardingChecklist(checklist) {
+  const defaults = getDefaultOnboardingChecklist();
+  const existingGroups = Array.isArray(checklist?.groups) ? checklist.groups : [];
+
+  return {
+    groups: defaults.groups.map((defaultGroup) => {
+      const existingGroup = existingGroups.find((group) => group?.key === defaultGroup.key) || {};
+      const existingItems = Array.isArray(existingGroup.items) ? existingGroup.items : [];
+
+      return {
+        ...defaultGroup,
+        items: defaultGroup.items.map((defaultItem) => {
+          const existingItem = existingItems.find((item) => item?.key === defaultItem.key) || {};
+          return {
+            ...defaultItem,
+            checked: Boolean(existingItem.checked),
+            note: String(existingItem.note || "").trim(),
+            updatedAt: existingItem.updatedAt || "",
+          };
+        }),
+      };
+    }),
+  };
+}
+
+function calculateOnboardingProgress(checklist) {
+  const normalized = normalizeOnboardingChecklist(checklist);
+  const items = normalized.groups.flatMap((group) => group.items);
+  const total = items.length;
+  const completed = items.filter((item) => item.checked).length;
+  const percentage = total ? Math.round((completed / total) * 100) : 0;
+
+  return { completed, total, percentage };
+}
+
+function getOnboardingStatus(progress, missingCriticalItems = []) {
+  if (!progress.percentage) {
+    return "Not Started";
+  }
+
+  if (progress.percentage === 100) {
+    return "Complete";
+  }
+
+  if (missingCriticalItems.length && progress.percentage >= 25) {
+    return "Blocked";
+  }
+
+  if (progress.percentage >= 70) {
+    return "Ready for Build";
+  }
+
+  return "In Progress";
+}
+
+function getMissingCriticalItems(checklist) {
+  return normalizeOnboardingChecklist(checklist)
+    .groups.flatMap((group) => group.items)
+    .filter((item) => item.critical && !item.checked)
+    .map((item) => item.label.replace(/^Confirm |^Collect /, ""));
 }
 
 function getClientByProspect(company) {
