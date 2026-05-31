@@ -94,6 +94,16 @@ const CLIENT_PROJECT_STATUSES = [
   "Blocked",
 ];
 const CLIENT_TABS = ["overview", "project", "onboarding", "documents", "payments", "credentials", "handover", "support"];
+const HANDOVER_STATUSES = [
+  "Not Started",
+  "Preparing",
+  "Ready for Client",
+  "Sent to Client",
+  "Client Trained",
+  "Completed",
+  "Support Started",
+  "Blocked",
+];
 const PROJECT_PHASES = [
   {
     key: "discovery",
@@ -180,6 +190,65 @@ const PROJECT_PHASES = [
       ["resourcesShared", "Final files/resources shared"],
       ["supportTermsConfirmed", "Support/maintenance terms confirmed"],
       ["handoverCompleted", "Handover completed", true, "Completed"],
+    ],
+  },
+];
+const HANDOVER_CHECKLIST_GROUPS = [
+  {
+    key: "launchVerification",
+    title: "Launch Verification",
+    items: [
+      ["liveUrlVerified", "Live URL verified", true],
+      ["sslVerified", "SSL/HTTPS verified", true],
+      ["mobileLoads", "Website loads on mobile"],
+      ["desktopLoads", "Website loads on desktop"],
+      ["contactFormTested", "Contact form tested", true],
+      ["bookingFlowTested", "Booking/contact flow tested"],
+      ["seoChecked", "Basic SEO title/description checked"],
+      ["googleProfileChecked", "Google Business/Profile link checked if applicable"],
+    ],
+  },
+  {
+    key: "clientAccess",
+    title: "Client Access",
+    items: [
+      ["adminUrlPrepared", "Admin URL prepared"],
+      ["clientLoginCreated", "Client login created if applicable"],
+      ["accessSharedSecurely", "Login/access shared securely", true],
+      ["passwordNotStored", "Password not stored in plain text"],
+      ["clientAccessConfirmed", "Client confirmed access works"],
+    ],
+  },
+  {
+    key: "training",
+    title: "Training",
+    items: [
+      ["walkthroughCompleted", "Client walkthrough completed"],
+      ["adminTrainingCompleted", "Admin/content update training completed"],
+      ["maintenanceInstructionsShared", "Basic maintenance instructions shared"],
+      ["supportProcessExplained", "Support process explained"],
+    ],
+  },
+  {
+    key: "finalDeliverables",
+    title: "Final Deliverables",
+    items: [
+      ["finalUrlShared", "Final website URL shared"],
+      ["scopeReviewed", "Final scope reviewed"],
+      ["finalChangesCompleted", "Final changes completed"],
+      ["clientApprovalReceived", "Client approval received", true],
+      ["invoicePaymentConfirmed", "Final invoice/payment status confirmed", true],
+      ["supportPlanConfirmed", "Maintenance/support plan confirmed", true],
+    ],
+  },
+  {
+    key: "closure",
+    title: "Closure",
+    items: [
+      ["handoverCompleted", "Handover completed", true],
+      ["projectMarkedCompleted", "Project marked completed"],
+      ["supportPeriodStarted", "Support period started", true],
+      ["internalNotesUpdated", "Internal notes updated"],
     ],
   },
 ];
@@ -1676,6 +1745,8 @@ function renderClientDetail() {
       const payload = readClientFormPayload(elements.detailContent, selectedTab);
       if (selectedTab === "project") {
         updateClientProject(clientId, payload);
+      } else if (selectedTab === "handover") {
+        updateClientHandover(clientId, payload);
       } else {
         updateClient(clientId, payload);
       }
@@ -1736,6 +1807,37 @@ function renderClientDetail() {
         client.clientId,
         input.getAttribute("data-project-phase"),
         input.getAttribute("data-project-task-note"),
+        {
+          checked: Boolean(checkbox?.checked),
+          note: input.value || "",
+        }
+      );
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-handover-item]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const row = checkbox.closest("[data-handover-row]");
+      updateHandoverItem(
+        client.clientId,
+        checkbox.getAttribute("data-handover-group"),
+        checkbox.getAttribute("data-handover-item"),
+        {
+          checked: checkbox.checked,
+          note: row?.querySelector("[data-handover-note]")?.value || "",
+        }
+      );
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-handover-note]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const row = input.closest("[data-handover-row]");
+      const checkbox = row?.querySelector("[data-handover-item]");
+      updateHandoverItem(
+        client.clientId,
+        input.getAttribute("data-handover-group"),
+        input.getAttribute("data-handover-note"),
         {
           checked: Boolean(checkbox?.checked),
           note: input.value || "",
@@ -1855,6 +1957,56 @@ function renderClientTabContent(client, activeTab) {
     `;
   }
 
+  if (activeTab === "handover") {
+    const checklist = normalizeHandoverChecklist(client.handoverChecklist);
+    const progress = calculateHandoverProgress(checklist);
+    const missingCriticalItems = getMissingCriticalHandoverItems(checklist);
+    const handoverStatus = getHandoverStatus(client, progress);
+    return `
+      <section class="workflow-card">
+        <div class="onboarding-summary">
+          <div>
+            <p class="detail-section-title">Handover</p>
+            <strong>${escapeHtml(progress.completed)} of ${escapeHtml(progress.total)} complete (${escapeHtml(progress.percentage)}%)</strong>
+            ${
+              missingCriticalItems.length
+                ? `<p class="toolbar-subtle">Missing critical: ${escapeHtml(missingCriticalItems.slice(0, 4).join(", "))}${missingCriticalItems.length > 4 ? "..." : ""}</p>`
+                : `<p class="toolbar-subtle">Confirm launch, access, training, deliverables, and support details before closing the project.</p>`
+            }
+          </div>
+          <span class="stage-chip">${escapeHtml(handoverStatus)}</span>
+        </div>
+        <div class="onboarding-progress" aria-label="Handover progress">
+          <span style="width: ${escapeAttribute(progress.percentage)}%"></span>
+        </div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Handover Fields</p>
+        <div class="workflow-form-grid">
+          <label class="inline-field">
+            <span>Handover status</span>
+            <select data-client-field="handoverStatus">
+              ${HANDOVER_STATUSES.map(
+                (status) => `<option value="${escapeAttribute(status)}" ${status === (client.handoverStatus || handoverStatus) ? "selected" : ""}>${escapeHtml(status)}</option>`
+              ).join("")}
+            </select>
+          </label>
+          ${renderClientInput("Launch date", "handoverLaunchDate", client.handoverLaunchDate || client.actualLaunchDate, "date")}
+          ${renderClientInput("Website/live URL", "liveUrl", client.liveUrl || client.websiteUrl, "url")}
+          ${renderClientInput("Admin/login URL", "adminUrl", client.adminUrl, "url")}
+          ${renderClientInput("Training date", "trainingDate", client.trainingDate, "date")}
+          ${renderClientInput("Support start date", "supportStartDate", client.supportStartDate, "date")}
+          ${renderClientInput("Support end date", "supportEndDate", client.supportEndDate, "date")}
+          ${renderClientInput("Maintenance plan", "maintenancePlan", client.maintenancePlan)}
+        </div>
+        <textarea class="workflow-textarea" rows="4" data-client-field="handoverNotes" placeholder="Handover notes">${escapeHtml(client.handoverNotes || "")}</textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-save-client="${escapeAttribute(client.clientId)}">Save Handover</button></div>
+      </section>
+      ${checklist.groups.map((group) => renderHandoverGroup(group)).join("")}
+      ${renderClientActivity(client)}
+    `;
+  }
+
   return `
     <section class="workflow-card">
       <p class="detail-section-title">${escapeHtml(titleCase(activeTab))}</p>
@@ -1936,6 +2088,50 @@ function renderProjectPhase(phase) {
   `;
 }
 
+function renderHandoverGroup(group) {
+  const securityNote =
+    group.key === "clientAccess"
+      ? `<p class="toolbar-subtle">Do not store raw passwords here. Store password references or secure handover notes only.</p>`
+      : "";
+
+  return `
+    <section class="workflow-card onboarding-group">
+      <p class="detail-section-title">${escapeHtml(group.title)}</p>
+      ${securityNote}
+      <div class="onboarding-list">
+        ${group.items
+          .map(
+            (item) => `
+              <div class="onboarding-item" data-handover-row>
+                <label class="onboarding-check">
+                  <input
+                    type="checkbox"
+                    ${item.checked ? "checked" : ""}
+                    data-handover-group="${escapeAttribute(group.key)}"
+                    data-handover-item="${escapeAttribute(item.key)}"
+                  />
+                  <span>
+                    ${escapeHtml(item.label)}
+                    ${item.critical ? `<em>Critical</em>` : ""}
+                  </span>
+                </label>
+                <input
+                  type="text"
+                  value="${escapeAttribute(item.note || "")}"
+                  placeholder="Note"
+                  data-handover-group="${escapeAttribute(group.key)}"
+                  data-handover-note="${escapeAttribute(item.key)}"
+                />
+                <small>${escapeHtml(item.updatedAt ? `Updated ${formatDateOnly(item.updatedAt)}` : "Not updated")}</small>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderClientActivity(client) {
   const activity = Array.isArray(client.activity) ? client.activity.slice(0, 8) : [];
   if (!activity.length) {
@@ -1984,6 +2180,12 @@ function readClientFormPayload(container, activeTab) {
       ? payload.projectStatus
       : "Client Onboarding";
     payload.isBlocked = payload.isBlocked === "yes";
+  }
+
+  if (activeTab === "handover") {
+    payload.handoverStatus = HANDOVER_STATUSES.includes(payload.handoverStatus)
+      ? payload.handoverStatus
+      : "Not Started";
   }
 
   return payload;
@@ -2412,6 +2614,21 @@ function updateClientProject(clientId, updates = {}) {
   updateClient(clientId, nextUpdates);
 }
 
+function updateClientHandover(clientId, updates = {}) {
+  const existing = state.clients.find((client) => client.clientId === clientId);
+  if (!existing) {
+    return;
+  }
+
+  const nextUpdates = { ...updates };
+  if (nextUpdates.handoverStatus === "Support Started") {
+    nextUpdates.projectStatus = "Maintenance";
+    nextUpdates.activity = addClientActivity(existing, "Support period started", "Handover");
+  }
+
+  updateClient(clientId, nextUpdates);
+}
+
 function updateOnboardingItem(clientId, groupKey, itemKey, updates = {}) {
   const now = new Date().toISOString();
   state.clients = state.clients.map((client) => {
@@ -2501,6 +2718,66 @@ function updateProjectTask(clientId, phaseKey, taskKey, updates = {}) {
       ...client,
       projectTracker: nextTracker,
       projectStatus: shouldMoveStatus ? suggestedStatus : client.projectStatus || "Client Onboarding",
+      activity,
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  renderDetail();
+}
+
+function updateHandoverItem(clientId, groupKey, itemKey, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const checklist = normalizeHandoverChecklist(client.handoverChecklist);
+    let checkedItem = null;
+    const nextChecklist = {
+      ...checklist,
+      groups: checklist.groups.map((group) =>
+        group.key === groupKey
+          ? {
+              ...group,
+              items: group.items.map((item) => {
+                if (item.key !== itemKey) {
+                  return item;
+                }
+
+                checkedItem = { ...item, checked: Boolean(updates.checked) };
+                return {
+                  ...item,
+                  checked: Boolean(updates.checked),
+                  note: String(updates.note || "").trim(),
+                  updatedAt: now,
+                };
+              }),
+            }
+          : group
+      ),
+    };
+    const progress = calculateHandoverProgress(nextChecklist);
+    const inferredStatus = getHandoverStatus({ ...client, handoverChecklist: nextChecklist }, progress);
+    const completedHandover = Boolean(updates.checked) && checkedItem?.key === "handoverCompleted";
+    const supportStarted = Boolean(updates.checked) && checkedItem?.key === "supportPeriodStarted";
+    const nextProjectStatus = completedHandover
+      ? "Completed"
+      : supportStarted
+        ? "Maintenance"
+        : client.projectStatus || "Client Onboarding";
+    const activity = completedHandover
+      ? addClientActivity(client, "Handover completed", "Handover")
+      : supportStarted
+        ? addClientActivity(client, "Support period started", "Handover")
+        : client.activity || [];
+
+    return {
+      ...client,
+      handoverChecklist: nextChecklist,
+      handoverStatus: completedHandover ? "Completed" : supportStarted ? "Support Started" : inferredStatus,
+      projectStatus: nextProjectStatus,
       activity,
       updatedAt: now,
     };
@@ -4149,6 +4426,7 @@ function getClients() {
         ...client,
         onboardingChecklist: normalizeOnboardingChecklist(client.onboardingChecklist),
         projectTracker: normalizeProjectTracker(client.projectTracker),
+        handoverChecklist: normalizeHandoverChecklist(client.handoverChecklist),
         activity: Array.isArray(client.activity) ? client.activity : [],
       }))
     : [];
@@ -4190,6 +4468,16 @@ function createClientFromProspect(company) {
     internalNotes: company.quote_internal_notes || "",
     onboardingChecklist: getDefaultOnboardingChecklist(),
     projectTracker: getDefaultProjectTracker(),
+    handoverChecklist: getDefaultHandoverChecklist(),
+    handoverStatus: "Not Started",
+    handoverLaunchDate: "",
+    liveUrl: "",
+    adminUrl: "",
+    trainingDate: "",
+    supportStartDate: "",
+    supportEndDate: "",
+    maintenancePlan: "",
+    handoverNotes: "",
     currentBlocker: "",
     nextProjectAction: "",
     actualLaunchDate: "",
@@ -4300,16 +4588,102 @@ function shouldRecordProjectActivity(task) {
   return Boolean(task?.major && task.checked);
 }
 
-function addClientActivity(client, message) {
+function addClientActivity(client, message, source = "Project") {
   return [
     {
       id: `client-activity-${Date.now()}`,
       createdAt: new Date().toISOString(),
       message,
-      source: "Project",
+      source,
     },
     ...(Array.isArray(client.activity) ? client.activity : []),
   ].slice(0, 50);
+}
+
+function getDefaultHandoverChecklist() {
+  return {
+    groups: HANDOVER_CHECKLIST_GROUPS.map((group) => ({
+      key: group.key,
+      title: group.title,
+      items: group.items.map(([key, label, critical = false]) => ({
+        key,
+        label,
+        critical: Boolean(critical),
+        checked: false,
+        note: "",
+        updatedAt: "",
+      })),
+    })),
+  };
+}
+
+function normalizeHandoverChecklist(checklist) {
+  const defaults = getDefaultHandoverChecklist();
+  const existingGroups = Array.isArray(checklist?.groups) ? checklist.groups : [];
+
+  return {
+    groups: defaults.groups.map((defaultGroup) => {
+      const existingGroup = existingGroups.find((group) => group?.key === defaultGroup.key) || {};
+      const existingItems = Array.isArray(existingGroup.items) ? existingGroup.items : [];
+
+      return {
+        ...defaultGroup,
+        items: defaultGroup.items.map((defaultItem) => {
+          const existingItem = existingItems.find((item) => item?.key === defaultItem.key) || {};
+          return {
+            ...defaultItem,
+            checked: Boolean(existingItem.checked),
+            note: String(existingItem.note || "").trim(),
+            updatedAt: existingItem.updatedAt || "",
+          };
+        }),
+      };
+    }),
+  };
+}
+
+function calculateHandoverProgress(checklist) {
+  const items = normalizeHandoverChecklist(checklist).groups.flatMap((group) => group.items);
+  const total = items.length;
+  const completed = items.filter((item) => item.checked).length;
+  const percentage = total ? Math.round((completed / total) * 100) : 0;
+
+  return { completed, total, percentage };
+}
+
+function getHandoverStatus(client, progress = calculateHandoverProgress(client?.handoverChecklist)) {
+  if ((client?.handoverStatus || "") === "Blocked" || String(client?.handoverBlocker || "").trim()) {
+    return "Blocked";
+  }
+
+  if ((client?.handoverStatus || "") === "Support Started") {
+    return client.handoverStatus;
+  }
+
+  if (!progress.percentage) {
+    return "Not Started";
+  }
+
+  if (progress.percentage === 100) {
+    return "Completed";
+  }
+
+  if (HANDOVER_STATUSES.includes(client?.handoverStatus) && client.handoverStatus !== "Not Started") {
+    return client.handoverStatus;
+  }
+
+  if (progress.percentage >= 61) {
+    return "Ready for Client";
+  }
+
+  return "Preparing";
+}
+
+function getMissingCriticalHandoverItems(checklist) {
+  return normalizeHandoverChecklist(checklist)
+    .groups.flatMap((group) => group.items)
+    .filter((item) => item.critical && !item.checked)
+    .map((item) => item.label);
 }
 
 function getDefaultOnboardingChecklist() {
