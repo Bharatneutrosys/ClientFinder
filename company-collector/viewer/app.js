@@ -134,6 +134,43 @@ const PAYMENT_METHODS = ["Cash", "Check", "Zelle", "Bank Transfer", "Credit/Debi
 const PAYMENT_TYPES = ["Advance", "Milestone", "Final Balance", "Maintenance", "Refund", "Other"];
 const PAYMENT_RECORD_STATUSES = ["Expected", "Received", "Pending", "Failed", "Refunded", "Cancelled"];
 const PAYMENT_STORAGE_LOCATIONS = ["Local computer", "Google Drive", "Email", "WhatsApp", "Client provided", "Other"];
+const ACCESS_CATEGORIES = [
+  "Domain Registrar",
+  "Hosting",
+  "Existing Website / CMS",
+  "Website Admin",
+  "Google Business Profile",
+  "Google Analytics",
+  "Google Search Console",
+  "Social Media",
+  "Booking Platform",
+  "Email Account",
+  "Payment / Checkout Provider",
+  "GitHub / Code Repository",
+  "Vercel / Hosting Deployment",
+  "Other",
+];
+const ACCESS_STATUSES = ["Needed", "Requested", "Received", "Verified", "Not Required", "Blocked", "Revoked"];
+const ACCESS_PERMISSION_LEVELS = ["Owner", "Admin", "Editor", "Viewer", "Limited", "Unknown"];
+const ACCESS_STORAGE_REFERENCES = [
+  "1Password",
+  "Google Password Manager",
+  "Client secure link",
+  "Email thread",
+  "WhatsApp message",
+  "Not stored",
+  "Other",
+];
+const REQUIRED_ACCESS_ITEMS = [
+  ["domainAccess", "Domain access"],
+  ["hostingAccess", "Hosting access"],
+  ["websiteAdminAccess", "Website admin access"],
+  ["googleBusinessProfileAccess", "Google Business Profile access"],
+  ["socialMediaAccess", "Social media links/access"],
+  ["bookingPlatformAccess", "Booking platform access"],
+  ["analyticsSearchConsoleAccess", "Analytics/Search Console access"],
+  ["deploymentAccess", "Deployment access if applicable"],
+];
 const REQUIRED_DOCUMENT_ITEMS = [
   ["signedContract", "Signed contract"],
   ["finalQuote", "Final quote"],
@@ -1963,6 +2000,45 @@ function renderClientDetail() {
       );
     });
   });
+
+  const addAccessButton = elements.detailContent.querySelector("[data-add-access-record]");
+  if (addAccessButton) {
+    addAccessButton.addEventListener("click", () => {
+      addClientAccessRecord(addAccessButton.getAttribute("data-add-access-record"), readAccessRecordFormPayload(elements.detailContent));
+    });
+  }
+
+  elements.detailContent.querySelectorAll("[data-access-record-field]").forEach((field) => {
+    field.addEventListener("change", () => {
+      const row = field.closest("[data-access-record-row]");
+      updateClientAccessRecord(
+        client.clientId,
+        field.getAttribute("data-access-record-id"),
+        readAccessRecordRowPayload(row)
+      );
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-access-checklist-item]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const row = checkbox.closest("[data-access-checklist-row]");
+      updateAccessChecklistItem(client.clientId, checkbox.getAttribute("data-access-checklist-item"), {
+        checked: checkbox.checked,
+        note: row?.querySelector("[data-access-checklist-note]")?.value || "",
+      });
+    });
+  });
+
+  elements.detailContent.querySelectorAll("[data-access-checklist-note]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const row = input.closest("[data-access-checklist-row]");
+      const checkbox = row?.querySelector("[data-access-checklist-item]");
+      updateAccessChecklistItem(client.clientId, input.getAttribute("data-access-checklist-note"), {
+        checked: Boolean(checkbox?.checked),
+        note: input.value || "",
+      });
+    });
+  });
 }
 
 function renderClientTabContent(client, activeTab) {
@@ -2236,6 +2312,63 @@ function renderClientTabContent(client, activeTab) {
     `;
   }
 
+  if (activeTab === "credentials") {
+    const accessChecklist = normalizeAccessChecklist(client.accessChecklist);
+    const accessRecords = normalizeAccessRecords(client.accessRecords);
+    const progress = calculateAccessProgress(accessChecklist, accessRecords);
+    const blockedRecords = accessRecords.filter((record) => record.accessStatus === "Blocked");
+    return `
+      <section class="workflow-card">
+        <div class="onboarding-summary">
+          <div>
+            <p class="detail-section-title">Credentials & Access</p>
+            <strong>${escapeHtml(progress.receivedVerified)} of ${escapeHtml(progress.totalRequired)} required access items ready</strong>
+            <p class="toolbar-subtle">${escapeHtml(progress.missing)} missing - ${escapeHtml(progress.blocked)} blocked</p>
+          </div>
+          <span class="stage-chip">${escapeHtml(getAccessStatus(progress))}</span>
+        </div>
+        <p class="toolbar-subtle">Do not store raw passwords here. Store only access status, username/email, and secure storage reference such as 1Password, Google Password Manager, email, or client-provided secure link.</p>
+      </section>
+      <section class="workflow-card onboarding-group">
+        <p class="detail-section-title">Required Access</p>
+        <div class="onboarding-list">
+          ${accessChecklist.items.map((item) => renderAccessChecklistItem(item)).join("")}
+        </div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Add Access Reference</p>
+        <div class="workflow-form-grid">
+          <label class="inline-field"><span>Category</span><select data-new-access-field="category">${ACCESS_CATEGORIES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          ${renderAccessInput("Platform Name", "platformName")}
+          ${renderAccessInput("Login URL", "loginUrl", "url")}
+          ${renderAccessInput("Username/Email", "usernameOrEmail", "email")}
+          <label class="inline-field"><span>Access Status</span><select data-new-access-field="accessStatus">${ACCESS_STATUSES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Permission Level</span><select data-new-access-field="permissionLevel">${ACCESS_PERMISSION_LEVELS.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Secure Storage Reference</span><select data-new-access-field="secureStorageReference">${ACCESS_STORAGE_REFERENCES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          ${renderAccessInput("Owner Contact", "ownerContact")}
+          ${renderAccessInput("Requested Date", "requestedDate", "date")}
+          ${renderAccessInput("Received Date", "receivedDate", "date")}
+          ${renderAccessInput("Last Verified Date", "lastVerifiedDate", "date")}
+        </div>
+        <textarea class="workflow-textarea" rows="3" data-new-access-field="notes" placeholder="Notes, blocker reason, or secure handover context"></textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-add-access-record="${escapeAttribute(client.clientId)}">Add Access</button></div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Access Records</p>
+        ${
+          blockedRecords.length
+            ? `<p class="workflow-note">Blocked access needs attention.</p>`
+            : ""
+        }
+        ${
+          accessRecords.length
+            ? `<div class="document-record-list">${accessRecords.map((record) => renderAccessRecord(record)).join("")}</div>`
+            : `<p class="toolbar-subtle">No access references added yet.</p>`
+        }
+      </section>
+    `;
+  }
+
   return `
     <section class="workflow-card">
       <p class="detail-section-title">${escapeHtml(titleCase(activeTab))}</p>
@@ -2485,6 +2618,63 @@ function renderPaymentRecord(payment) {
   `;
 }
 
+function renderAccessChecklistItem(item) {
+  return `
+    <div class="onboarding-item" data-access-checklist-row>
+      <label class="onboarding-check">
+        <input
+          type="checkbox"
+          ${item.checked ? "checked" : ""}
+          data-access-checklist-item="${escapeAttribute(item.key)}"
+        />
+        <span>${escapeHtml(item.label)}</span>
+      </label>
+      <input
+        type="text"
+        value="${escapeAttribute(item.note || "")}"
+        placeholder="Note"
+        data-access-checklist-note="${escapeAttribute(item.key)}"
+      />
+      <small>${escapeHtml(item.updatedAt ? `Updated ${formatDateOnly(item.updatedAt)}` : "Not updated")}</small>
+    </div>
+  `;
+}
+
+function renderAccessInput(label, field, type = "text") {
+  return `
+    <label class="inline-field">
+      <span>${escapeHtml(label)}</span>
+      <input type="${escapeAttribute(type)}" data-new-access-field="${escapeAttribute(field)}" />
+    </label>
+  `;
+}
+
+function renderAccessRecord(record) {
+  return `
+    <div class="document-record ${record.accessStatus === "Blocked" ? "overdue" : ""}" data-access-record-row="${escapeAttribute(record.accessId)}">
+      <div class="document-record-top">
+        <div>
+          <strong>${escapeHtml(record.platformName || record.category || "Access reference")}</strong>
+          <p class="toolbar-subtle">${escapeHtml(record.category || "Other")} - ${escapeHtml(record.permissionLevel || "Unknown")} - ${escapeHtml(record.secureStorageReference || "Not stored")}</p>
+        </div>
+        <span class="stage-chip">${escapeHtml(record.accessStatus || "Needed")}</span>
+      </div>
+      <div class="workflow-form-grid">
+        <label class="inline-field"><span>Status</span><select data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="accessStatus">${ACCESS_STATUSES.map((value) => `<option value="${escapeAttribute(value)}" ${value === record.accessStatus ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Permission</span><select data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="permissionLevel">${ACCESS_PERMISSION_LEVELS.map((value) => `<option value="${escapeAttribute(value)}" ${value === record.permissionLevel ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Login URL</span><input type="url" value="${escapeAttribute(record.loginUrl || "")}" data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="loginUrl" /></label>
+        <label class="inline-field"><span>Username/Email</span><input type="text" value="${escapeAttribute(record.usernameOrEmail || "")}" data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="usernameOrEmail" /></label>
+        <label class="inline-field"><span>Storage Reference</span><select data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="secureStorageReference">${ACCESS_STORAGE_REFERENCES.map((value) => `<option value="${escapeAttribute(value)}" ${value === record.secureStorageReference ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Owner Contact</span><input type="text" value="${escapeAttribute(record.ownerContact || "")}" data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="ownerContact" /></label>
+        <label class="inline-field"><span>Requested Date</span><input type="date" value="${escapeAttribute(record.requestedDate || "")}" data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="requestedDate" /></label>
+        <label class="inline-field"><span>Received Date</span><input type="date" value="${escapeAttribute(record.receivedDate || "")}" data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="receivedDate" /></label>
+        <label class="inline-field"><span>Last Verified</span><input type="date" value="${escapeAttribute(record.lastVerifiedDate || "")}" data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="lastVerifiedDate" /></label>
+      </div>
+      <textarea class="workflow-textarea" rows="2" data-access-record-id="${escapeAttribute(record.accessId)}" data-access-record-field="notes" placeholder="Notes">${escapeHtml(record.notes || "")}</textarea>
+    </div>
+  `;
+}
+
 function renderClientInput(label, field, value, type = "text") {
   return `
     <label class="inline-field">
@@ -2530,6 +2720,22 @@ function readPaymentRecordRowPayload(row) {
   const payload = {};
   row?.querySelectorAll("[data-payment-record-field]").forEach((field) => {
     payload[field.getAttribute("data-payment-record-field")] = field.value || "";
+  });
+  return payload;
+}
+
+function readAccessRecordFormPayload(container) {
+  const payload = {};
+  container.querySelectorAll("[data-new-access-field]").forEach((field) => {
+    payload[field.getAttribute("data-new-access-field")] = field.value || "";
+  });
+  return payload;
+}
+
+function readAccessRecordRowPayload(row) {
+  const payload = {};
+  row?.querySelectorAll("[data-access-record-field]").forEach((field) => {
+    payload[field.getAttribute("data-access-record-field")] = field.value || "";
   });
   return payload;
 }
@@ -3328,6 +3534,96 @@ function updatePaymentRecord(clientId, paymentId, updates = {}) {
       nextRecord,
       previousRecord
     );
+  });
+  saveClients();
+  renderDetail();
+}
+
+function addClientAccessRecord(clientId, payload = {}) {
+  const accessRecord = getDefaultAccessRecord(payload);
+  if (!accessRecord.platformName && !accessRecord.loginUrl) {
+    elements.statusMessage.textContent = "Enter a platform name or login URL before adding access.";
+    return;
+  }
+
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    return syncAccessWithOnboarding(
+      {
+        ...client,
+        accessRecords: [accessRecord, ...normalizeAccessRecords(client.accessRecords)],
+        activity: addAccessActivity(client, accessRecord, null),
+        updatedAt: new Date().toISOString(),
+      },
+      accessRecord
+    );
+  });
+  saveClients();
+  elements.statusMessage.textContent = "Access reference added.";
+  renderDetail();
+}
+
+function updateClientAccessRecord(clientId, accessId, updates = {}) {
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const existingRecords = normalizeAccessRecords(client.accessRecords);
+    const previousRecord = existingRecords.find((record) => record.accessId === accessId) || null;
+    const accessRecords = existingRecords.map((record) =>
+      record.accessId === accessId
+        ? getDefaultAccessRecord({
+            ...record,
+            ...updates,
+            accessId: record.accessId,
+            createdAt: record.createdAt,
+            updatedAt: new Date().toISOString(),
+          })
+        : record
+    );
+    const nextRecord = accessRecords.find((record) => record.accessId === accessId) || null;
+    return syncAccessWithOnboarding(
+      {
+        ...client,
+        accessRecords,
+        activity: addAccessActivity(client, nextRecord, previousRecord),
+        updatedAt: new Date().toISOString(),
+      },
+      nextRecord
+    );
+  });
+  saveClients();
+  renderDetail();
+}
+
+function updateAccessChecklistItem(clientId, itemKey, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const checklist = normalizeAccessChecklist(client.accessChecklist);
+    return {
+      ...client,
+      accessChecklist: {
+        items: checklist.items.map((item) =>
+          item.key === itemKey
+            ? {
+                ...item,
+                checked: Boolean(updates.checked),
+                note: String(updates.note || "").trim(),
+                updatedAt: now,
+              }
+            : item
+        ),
+      },
+      updatedAt: now,
+    };
   });
   saveClients();
   renderDetail();
@@ -4978,6 +5274,8 @@ function getClients() {
         documents: normalizeClientDocuments(client.documents),
         paymentSummary: normalizePaymentSummary(client.paymentSummary, client),
         paymentRecords: normalizePaymentRecords(client.paymentRecords),
+        accessChecklist: normalizeAccessChecklist(client.accessChecklist),
+        accessRecords: normalizeAccessRecords(client.accessRecords),
         activity: Array.isArray(client.activity) ? client.activity : [],
       }))
     : [];
@@ -5024,6 +5322,8 @@ function createClientFromProspect(company) {
     documents: [],
     paymentSummary: getDefaultPaymentSummary(company),
     paymentRecords: [],
+    accessChecklist: getDefaultAccessChecklist(),
+    accessRecords: [],
     handoverStatus: "Not Started",
     handoverLaunchDate: "",
     liveUrl: "",
@@ -5180,6 +5480,201 @@ function getDefaultPaymentSummary(source = {}) {
     paymentTerms: source.quote_payment_terms || source.sourceProspectData?.quote_payment_terms || "",
     paymentNotes: "",
   };
+}
+
+function getDefaultAccessChecklist() {
+  return {
+    items: REQUIRED_ACCESS_ITEMS.map(([key, label]) => ({
+      key,
+      label,
+      checked: false,
+      note: "",
+      updatedAt: "",
+    })),
+  };
+}
+
+function normalizeAccessChecklist(checklist) {
+  const defaults = getDefaultAccessChecklist();
+  const existingItems = Array.isArray(checklist?.items) ? checklist.items : [];
+  return {
+    items: defaults.items.map((defaultItem) => {
+      const existingItem = existingItems.find((item) => item?.key === defaultItem.key) || {};
+      return {
+        ...defaultItem,
+        checked: Boolean(existingItem.checked),
+        note: String(existingItem.note || "").trim(),
+        updatedAt: existingItem.updatedAt || "",
+      };
+    }),
+  };
+}
+
+function getDefaultAccessRecord(payload = {}) {
+  const now = new Date().toISOString();
+  return {
+    accessId: payload.accessId || `access-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    category: ACCESS_CATEGORIES.includes(payload.category) ? payload.category : "Other",
+    platformName: String(payload.platformName || "").trim(),
+    loginUrl: String(payload.loginUrl || "").trim(),
+    usernameOrEmail: String(payload.usernameOrEmail || "").trim(),
+    accessStatus: ACCESS_STATUSES.includes(payload.accessStatus) ? payload.accessStatus : "Needed",
+    permissionLevel: ACCESS_PERMISSION_LEVELS.includes(payload.permissionLevel) ? payload.permissionLevel : "Unknown",
+    secureStorageReference: ACCESS_STORAGE_REFERENCES.includes(payload.secureStorageReference)
+      ? payload.secureStorageReference
+      : "Not stored",
+    ownerContact: String(payload.ownerContact || "").trim(),
+    notes: String(payload.notes || "").trim(),
+    requestedDate: String(payload.requestedDate || "").slice(0, 10),
+    receivedDate: String(payload.receivedDate || "").slice(0, 10),
+    lastVerifiedDate: String(payload.lastVerifiedDate || "").slice(0, 10),
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  };
+}
+
+function normalizeAccessRecords(records) {
+  return Array.isArray(records) ? records.map((record) => getDefaultAccessRecord(record)) : [];
+}
+
+function calculateAccessProgress(checklist, records = []) {
+  const normalizedChecklist = normalizeAccessChecklist(checklist);
+  const totalRequired = normalizedChecklist.items.length;
+  const checklistReady = normalizedChecklist.items.filter((item) => item.checked).length;
+  const readyRecords = normalizeAccessRecords(records).filter((record) =>
+    ["Received", "Verified", "Not Required"].includes(record.accessStatus)
+  ).length;
+  const blocked = normalizeAccessRecords(records).filter((record) => record.accessStatus === "Blocked").length;
+  const receivedVerified = Math.min(totalRequired, Math.max(checklistReady, readyRecords));
+  const missing = Math.max(0, totalRequired - receivedVerified);
+  return { totalRequired, receivedVerified, missing, blocked };
+}
+
+function getAccessStatus(progress) {
+  if (progress.blocked) {
+    return "Blocked";
+  }
+
+  if (!progress.receivedVerified) {
+    return "Not Started";
+  }
+
+  if (!progress.missing) {
+    return "Access Ready";
+  }
+
+  return progress.receivedVerified < progress.totalRequired ? "Waiting on Client" : "In Progress";
+}
+
+function addAccessActivity(client, nextRecord, previousRecord = null) {
+  if (!nextRecord) {
+    return client.activity || [];
+  }
+
+  if (!previousRecord && nextRecord.accessStatus === "Requested") {
+    return addClientActivity(client, `Access requested: ${nextRecord.category}`, "Credentials");
+  }
+
+  if (previousRecord?.accessStatus === nextRecord.accessStatus) {
+    return client.activity || [];
+  }
+
+  if (nextRecord.accessStatus === "Requested") {
+    return addClientActivity(client, `Access requested: ${nextRecord.category}`, "Credentials");
+  }
+
+  if (nextRecord.accessStatus === "Received") {
+    return addClientActivity(client, `Access received: ${nextRecord.category}`, "Credentials");
+  }
+
+  if (nextRecord.accessStatus === "Verified") {
+    return addClientActivity(client, `Access verified: ${nextRecord.category}`, "Credentials");
+  }
+
+  if (nextRecord.accessStatus === "Blocked") {
+    return addClientActivity(client, `Access blocked: ${nextRecord.category}`, "Credentials");
+  }
+
+  return client.activity || [];
+}
+
+function syncAccessWithOnboarding(client, accessRecord) {
+  if (!accessRecord || !["Received", "Verified"].includes(accessRecord.accessStatus)) {
+    return client;
+  }
+
+  const accessChecklistKey = getAccessChecklistKeyForCategory(accessRecord.category);
+  const accessChecklist = normalizeAccessChecklist(client.accessChecklist);
+  const onboardingKey =
+    accessRecord.category === "Domain Registrar"
+      ? "domainAccess"
+      : accessRecord.category === "Hosting"
+        ? "hostingAccess"
+        : "";
+  if (!onboardingKey) {
+    return accessChecklistKey
+      ? {
+          ...client,
+          accessChecklist: markAccessChecklistItemReady(accessChecklist, accessChecklistKey, accessRecord),
+        }
+      : client;
+  }
+
+  const checklist = normalizeOnboardingChecklist(client.onboardingChecklist);
+  const now = new Date().toISOString();
+  return {
+    ...client,
+    accessChecklist: accessChecklistKey
+      ? markAccessChecklistItemReady(accessChecklist, accessChecklistKey, accessRecord)
+      : client.accessChecklist,
+    onboardingChecklist: {
+      groups: checklist.groups.map((group) => ({
+        ...group,
+        items: group.items.map((item) =>
+          item.key === onboardingKey
+            ? {
+                ...item,
+                checked: true,
+                note: item.note || `${accessRecord.category} ${accessRecord.accessStatus.toLowerCase()}`,
+                updatedAt: now,
+              }
+            : item
+        ),
+      })),
+    },
+  };
+}
+
+function markAccessChecklistItemReady(checklist, itemKey, accessRecord) {
+  const now = new Date().toISOString();
+  return {
+    items: normalizeAccessChecklist(checklist).items.map((item) =>
+      item.key === itemKey
+        ? {
+            ...item,
+            checked: true,
+            note: item.note || `${accessRecord.category} ${accessRecord.accessStatus.toLowerCase()}`,
+            updatedAt: now,
+          }
+        : item
+    ),
+  };
+}
+
+function getAccessChecklistKeyForCategory(category) {
+  const map = {
+    "Domain Registrar": "domainAccess",
+    Hosting: "hostingAccess",
+    "Existing Website / CMS": "websiteAdminAccess",
+    "Website Admin": "websiteAdminAccess",
+    "Google Business Profile": "googleBusinessProfileAccess",
+    "Google Analytics": "analyticsSearchConsoleAccess",
+    "Google Search Console": "analyticsSearchConsoleAccess",
+    "Social Media": "socialMediaAccess",
+    "Booking Platform": "bookingPlatformAccess",
+    "Vercel / Hosting Deployment": "deploymentAccess",
+  };
+  return map[category] || "";
 }
 
 function normalizePaymentSummary(summary, client = {}) {
