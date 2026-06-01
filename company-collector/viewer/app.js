@@ -129,6 +129,11 @@ const DOCUMENT_STORAGE_LOCATIONS = [
   "Vercel/GitHub",
   "Other",
 ];
+const PAYMENT_STATUSES = ["Not Started", "Advance Pending", "Partially Paid", "Paid in Full", "Overdue", "Refunded", "Cancelled"];
+const PAYMENT_METHODS = ["Cash", "Check", "Zelle", "Bank Transfer", "Credit/Debit Card", "PayPal", "Venmo", "Cash App", "Other"];
+const PAYMENT_TYPES = ["Advance", "Milestone", "Final Balance", "Maintenance", "Refund", "Other"];
+const PAYMENT_RECORD_STATUSES = ["Expected", "Received", "Pending", "Failed", "Refunded", "Cancelled"];
+const PAYMENT_STORAGE_LOCATIONS = ["Local computer", "Google Drive", "Email", "WhatsApp", "Client provided", "Other"];
 const REQUIRED_DOCUMENT_ITEMS = [
   ["signedContract", "Signed contract"],
   ["finalQuote", "Final quote"],
@@ -1252,6 +1257,9 @@ function renderClientsView() {
 }
 
 function renderClientRow(client) {
+  const paymentSummary = normalizePaymentSummary(client.paymentSummary, client);
+  const paymentTotals = calculatePaymentTotals(paymentSummary, normalizePaymentRecords(client.paymentRecords));
+  const paymentStatus = paymentSummary.paymentStatus || suggestPaymentStatus(paymentSummary, paymentTotals);
   return `
     <article class="prospect-row ${client.clientId === state.selectedClientId ? "selected" : ""}">
       <button class="prospect-main" type="button" data-open-client="${escapeAttribute(client.clientId)}">
@@ -1266,6 +1274,7 @@ function renderClientRow(client) {
       <div class="prospect-signals">
         <span>${escapeHtml(client.email || "No email")}</span>
         <span>${escapeHtml([client.city, client.state].filter(Boolean).join(", ") || "Location not set")}</span>
+        <span>${escapeHtml(paymentStatus)} - Balance ${escapeHtml(formatMoneyValue(paymentTotals.balanceDue) || "$0")}</span>
       </div>
       <div class="prospect-actions">
         <button class="secondary-btn" type="button" data-open-client="${escapeAttribute(client.clientId)}">Open</button>
@@ -1926,6 +1935,34 @@ function renderClientDetail() {
       });
     });
   });
+
+  const savePaymentButton = elements.detailContent.querySelector("[data-save-payment-summary]");
+  if (savePaymentButton) {
+    savePaymentButton.addEventListener("click", () => {
+      updatePaymentSummary(
+        savePaymentButton.getAttribute("data-save-payment-summary"),
+        readPaymentSummaryPayload(elements.detailContent)
+      );
+    });
+  }
+
+  const addPaymentButton = elements.detailContent.querySelector("[data-add-payment-record]");
+  if (addPaymentButton) {
+    addPaymentButton.addEventListener("click", () => {
+      addPaymentRecord(addPaymentButton.getAttribute("data-add-payment-record"), readPaymentRecordFormPayload(elements.detailContent));
+    });
+  }
+
+  elements.detailContent.querySelectorAll("[data-payment-record-field]").forEach((field) => {
+    field.addEventListener("change", () => {
+      const row = field.closest("[data-payment-record-row]");
+      updatePaymentRecord(
+        client.clientId,
+        field.getAttribute("data-payment-record-id"),
+        readPaymentRecordRowPayload(row)
+      );
+    });
+  });
 }
 
 function renderClientTabContent(client, activeTab) {
@@ -2131,6 +2168,69 @@ function renderClientTabContent(client, activeTab) {
           documents.length
             ? `<div class="document-record-list">${documents.map((document) => renderDocumentRecord(document, overdueDocuments)).join("")}</div>`
             : `<p class="toolbar-subtle">No document references added yet.</p>`
+        }
+      </section>
+    `;
+  }
+
+  if (activeTab === "payments") {
+    const paymentSummary = normalizePaymentSummary(client.paymentSummary, client);
+    const paymentRecords = normalizePaymentRecords(client.paymentRecords);
+    const totals = calculatePaymentTotals(paymentSummary, paymentRecords);
+    const suggestedStatus = suggestPaymentStatus(paymentSummary, totals);
+    const quoteSuggestion = getSuggestedPaymentAmountFromQuote(client);
+    return `
+      <section class="workflow-card">
+        <div class="onboarding-summary">
+          <div>
+            <p class="detail-section-title">Payments</p>
+            <strong>${escapeHtml(formatMoneyValue(totals.totalReceived) || "$0")} received - ${escapeHtml(formatMoneyValue(totals.balanceDue) || "$0")} balance due</strong>
+            <p class="toolbar-subtle">Advance received: ${escapeHtml(formatMoneyValue(totals.advanceReceivedAmount) || "$0")}${quoteSuggestion ? ` - Quote suggestion: ${escapeHtml(formatMoneyValue(quoteSuggestion))}` : ""}</p>
+          </div>
+          <span class="stage-chip">${escapeHtml(getPaymentStatusChip(paymentSummary.paymentStatus || suggestedStatus))}</span>
+        </div>
+        <p class="toolbar-subtle">Do not store sensitive bank/card details here. Track payment references only.</p>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Payment Summary</p>
+        <div class="workflow-form-grid">
+          ${renderPaymentInput("Project amount", "quotedAmount", paymentSummary.quotedAmount)}
+          ${renderPaymentInput("Discount", "discountAmount", paymentSummary.discountAmount)}
+          ${renderPaymentInput("Final agreed amount", "finalAgreedAmount", paymentSummary.finalAgreedAmount)}
+          ${renderPaymentInput("Advance required", "advanceRequiredAmount", paymentSummary.advanceRequiredAmount)}
+          <label class="inline-field"><span>Advance received</span><input type="text" value="${escapeAttribute(formatMoneyValue(totals.advanceReceivedAmount) || "0")}" readonly /></label>
+          <label class="inline-field"><span>Balance due</span><input type="text" value="${escapeAttribute(formatMoneyValue(totals.balanceDue) || "0")}" readonly /></label>
+          <label class="inline-field">
+            <span>Payment status</span>
+            <select data-payment-summary-field="paymentStatus">
+              ${PAYMENT_STATUSES.map((status) => `<option value="${escapeAttribute(status)}" ${status === (paymentSummary.paymentStatus || suggestedStatus) ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
+            </select>
+          </label>
+          ${renderPaymentInput("Payment terms", "paymentTerms", paymentSummary.paymentTerms, "text")}
+        </div>
+        <textarea class="workflow-textarea" rows="3" data-payment-summary-field="paymentNotes" placeholder="Maintenance/support payment notes">${escapeHtml(paymentSummary.paymentNotes || "")}</textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-save-payment-summary="${escapeAttribute(client.clientId)}">Save Payment Summary</button></div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Add Payment Record</p>
+        <div class="workflow-form-grid">
+          ${renderPaymentRecordInput("Date", "paymentDate", "date")}
+          ${renderPaymentRecordInput("Amount", "amount")}
+          <label class="inline-field"><span>Method</span><select data-new-payment-field="paymentMethod">${PAYMENT_METHODS.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Type</span><select data-new-payment-field="paymentType">${PAYMENT_TYPES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Status</span><select data-new-payment-field="status">${PAYMENT_RECORD_STATUSES.map((value) => `<option value="${escapeAttribute(value)}" ${value === "Received" ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+          ${renderPaymentRecordInput("Receipt/reference", "receiptReference")}
+          <label class="inline-field"><span>Storage Location</span><select data-new-payment-field="storageLocation">${PAYMENT_STORAGE_LOCATIONS.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+        </div>
+        <textarea class="workflow-textarea" rows="3" data-new-payment-field="notes" placeholder="Notes"></textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-add-payment-record="${escapeAttribute(client.clientId)}">Add Payment</button></div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Payment Records</p>
+        ${
+          paymentRecords.length
+            ? `<div class="document-record-list">${paymentRecords.map((payment) => renderPaymentRecord(payment)).join("")}</div>`
+            : `<p class="toolbar-subtle">No payment records added yet.</p>`
         }
       </section>
     `;
@@ -2343,6 +2443,48 @@ function renderDocumentRecord(document, overdueDocuments = []) {
   `;
 }
 
+function renderPaymentInput(label, field, value, type = "text") {
+  return `
+    <label class="inline-field">
+      <span>${escapeHtml(label)}</span>
+      <input type="${escapeAttribute(type)}" value="${escapeAttribute(value || "")}" data-payment-summary-field="${escapeAttribute(field)}" />
+    </label>
+  `;
+}
+
+function renderPaymentRecordInput(label, field, type = "text") {
+  return `
+    <label class="inline-field">
+      <span>${escapeHtml(label)}</span>
+      <input type="${escapeAttribute(type)}" data-new-payment-field="${escapeAttribute(field)}" />
+    </label>
+  `;
+}
+
+function renderPaymentRecord(payment) {
+  return `
+    <div class="document-record" data-payment-record-row="${escapeAttribute(payment.paymentId)}">
+      <div class="document-record-top">
+        <div>
+          <strong>${escapeHtml(formatMoneyValue(payment.amount) || "$0")} - ${escapeHtml(payment.paymentType || "Other")}</strong>
+          <p class="toolbar-subtle">${escapeHtml(payment.paymentDate || "No date")} - ${escapeHtml(payment.paymentMethod || "Other")} - ${escapeHtml(payment.receiptReference || "No receipt reference")}</p>
+        </div>
+        <span class="stage-chip">${escapeHtml(payment.status || "Expected")}</span>
+      </div>
+      <div class="workflow-form-grid">
+        <label class="inline-field"><span>Status</span><select data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="status">${PAYMENT_RECORD_STATUSES.map((value) => `<option value="${escapeAttribute(value)}" ${value === payment.status ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Amount</span><input type="text" value="${escapeAttribute(payment.amount || "")}" data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="amount" /></label>
+        <label class="inline-field"><span>Date</span><input type="date" value="${escapeAttribute(payment.paymentDate || "")}" data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="paymentDate" /></label>
+        <label class="inline-field"><span>Method</span><select data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="paymentMethod">${PAYMENT_METHODS.map((value) => `<option value="${escapeAttribute(value)}" ${value === payment.paymentMethod ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Type</span><select data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="paymentType">${PAYMENT_TYPES.map((value) => `<option value="${escapeAttribute(value)}" ${value === payment.paymentType ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Receipt/reference</span><input type="text" value="${escapeAttribute(payment.receiptReference || "")}" data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="receiptReference" /></label>
+        <label class="inline-field"><span>Storage Location</span><select data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="storageLocation">${PAYMENT_STORAGE_LOCATIONS.map((value) => `<option value="${escapeAttribute(value)}" ${value === payment.storageLocation ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+      </div>
+      <textarea class="workflow-textarea" rows="2" data-payment-record-id="${escapeAttribute(payment.paymentId)}" data-payment-record-field="notes" placeholder="Notes">${escapeHtml(payment.notes || "")}</textarea>
+    </div>
+  `;
+}
+
 function renderClientInput(label, field, value, type = "text") {
   return `
     <label class="inline-field">
@@ -2364,6 +2506,30 @@ function readDocumentRowPayload(row) {
   const payload = {};
   row?.querySelectorAll("[data-document-field]").forEach((field) => {
     payload[field.getAttribute("data-document-field")] = field.value || "";
+  });
+  return payload;
+}
+
+function readPaymentSummaryPayload(container) {
+  const payload = {};
+  container.querySelectorAll("[data-payment-summary-field]").forEach((field) => {
+    payload[field.getAttribute("data-payment-summary-field")] = field.value || "";
+  });
+  return payload;
+}
+
+function readPaymentRecordFormPayload(container) {
+  const payload = {};
+  container.querySelectorAll("[data-new-payment-field]").forEach((field) => {
+    payload[field.getAttribute("data-new-payment-field")] = field.value || "";
+  });
+  return payload;
+}
+
+function readPaymentRecordRowPayload(row) {
+  const payload = {};
+  row?.querySelectorAll("[data-payment-record-field]").forEach((field) => {
+    payload[field.getAttribute("data-payment-record-field")] = field.value || "";
   });
   return payload;
 }
@@ -3074,6 +3240,94 @@ function updateDocumentChecklistItem(clientId, itemKey, updates = {}) {
       },
       updatedAt: now,
     };
+  });
+  saveClients();
+  renderDetail();
+}
+
+function updatePaymentSummary(clientId, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const paymentRecords = normalizePaymentRecords(client.paymentRecords);
+    const paymentSummary = normalizePaymentSummary({ ...client.paymentSummary, ...updates }, client);
+    const totals = calculatePaymentTotals(paymentSummary, paymentRecords);
+    return {
+      ...client,
+      paymentSummary: {
+        ...paymentSummary,
+        advanceReceivedAmount: totals.advanceReceivedAmount,
+        balanceDue: totals.balanceDue,
+        paymentStatus: suggestPaymentStatus(paymentSummary, totals),
+      },
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  elements.statusMessage.textContent = "Payment summary saved.";
+  render();
+}
+
+function addPaymentRecord(clientId, payload = {}) {
+  const paymentRecord = getDefaultPaymentRecord(payload);
+  if (!paymentRecord.amount) {
+    elements.statusMessage.textContent = "Enter a payment amount before adding.";
+    return;
+  }
+
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const paymentRecords = [paymentRecord, ...normalizePaymentRecords(client.paymentRecords)];
+    return syncPaymentWithClientActivity(
+      {
+        ...client,
+        paymentRecords,
+        updatedAt: new Date().toISOString(),
+      },
+      paymentRecord,
+      null
+    );
+  });
+  saveClients();
+  elements.statusMessage.textContent = "Payment record added.";
+  renderDetail();
+}
+
+function updatePaymentRecord(clientId, paymentId, updates = {}) {
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const existingRecords = normalizePaymentRecords(client.paymentRecords);
+    const previousRecord = existingRecords.find((record) => record.paymentId === paymentId) || null;
+    const paymentRecords = existingRecords.map((record) =>
+      record.paymentId === paymentId
+        ? getDefaultPaymentRecord({
+            ...record,
+            ...updates,
+            paymentId: record.paymentId,
+            createdAt: record.createdAt,
+            updatedAt: new Date().toISOString(),
+          })
+        : record
+    );
+    const nextRecord = paymentRecords.find((record) => record.paymentId === paymentId) || null;
+    return syncPaymentWithClientActivity(
+      {
+        ...client,
+        paymentRecords,
+        updatedAt: new Date().toISOString(),
+      },
+      nextRecord,
+      previousRecord
+    );
   });
   saveClients();
   renderDetail();
@@ -4722,6 +4976,8 @@ function getClients() {
         handoverChecklist: normalizeHandoverChecklist(client.handoverChecklist),
         documentChecklist: normalizeDocumentChecklist(client.documentChecklist),
         documents: normalizeClientDocuments(client.documents),
+        paymentSummary: normalizePaymentSummary(client.paymentSummary, client),
+        paymentRecords: normalizePaymentRecords(client.paymentRecords),
         activity: Array.isArray(client.activity) ? client.activity : [],
       }))
     : [];
@@ -4766,6 +5022,8 @@ function createClientFromProspect(company) {
     handoverChecklist: getDefaultHandoverChecklist(),
     documentChecklist: getDefaultDocumentChecklist(),
     documents: [],
+    paymentSummary: getDefaultPaymentSummary(company),
+    paymentRecords: [],
     handoverStatus: "Not Started",
     handoverLaunchDate: "",
     liveUrl: "",
@@ -4907,6 +5165,155 @@ function getDefaultDocumentChecklist() {
       updatedAt: "",
     })),
   };
+}
+
+function getDefaultPaymentSummary(source = {}) {
+  const quoteAmount = getSuggestedPaymentAmountFromQuote(source);
+  return {
+    quotedAmount: quoteAmount || "",
+    discountAmount: source.quote_discount || "",
+    finalAgreedAmount: quoteAmount || "",
+    advanceRequiredAmount: "",
+    advanceReceivedAmount: 0,
+    balanceDue: quoteAmount || 0,
+    paymentStatus: "Not Started",
+    paymentTerms: source.quote_payment_terms || source.sourceProspectData?.quote_payment_terms || "",
+    paymentNotes: "",
+  };
+}
+
+function normalizePaymentSummary(summary, client = {}) {
+  const defaults = getDefaultPaymentSummary(client);
+  const normalized = {
+    ...defaults,
+    ...(summary && typeof summary === "object" ? summary : {}),
+  };
+  normalized.quotedAmount = parseMoneyValue(normalized.quotedAmount);
+  normalized.discountAmount = parseMoneyValue(normalized.discountAmount);
+  normalized.finalAgreedAmount = parseMoneyValue(normalized.finalAgreedAmount);
+  normalized.advanceRequiredAmount = parseMoneyValue(normalized.advanceRequiredAmount);
+  normalized.advanceReceivedAmount = parseMoneyValue(normalized.advanceReceivedAmount);
+  normalized.balanceDue = parseMoneyValue(normalized.balanceDue);
+  normalized.paymentStatus = PAYMENT_STATUSES.includes(normalized.paymentStatus) ? normalized.paymentStatus : "Not Started";
+  normalized.paymentTerms = String(normalized.paymentTerms || "").trim();
+  normalized.paymentNotes = String(normalized.paymentNotes || "").trim();
+  return normalized;
+}
+
+function getDefaultPaymentRecord(payload = {}) {
+  const now = new Date().toISOString();
+  return {
+    paymentId: payload.paymentId || `payment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    paymentDate: String(payload.paymentDate || getTodayDateKey()).slice(0, 10),
+    amount: parseMoneyValue(payload.amount),
+    paymentMethod: PAYMENT_METHODS.includes(payload.paymentMethod) ? payload.paymentMethod : "Other",
+    paymentType: PAYMENT_TYPES.includes(payload.paymentType) ? payload.paymentType : "Other",
+    status: PAYMENT_RECORD_STATUSES.includes(payload.status) ? payload.status : "Expected",
+    receiptReference: String(payload.receiptReference || "").trim(),
+    storageLocation: PAYMENT_STORAGE_LOCATIONS.includes(payload.storageLocation) ? payload.storageLocation : "Other",
+    notes: String(payload.notes || "").trim(),
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  };
+}
+
+function normalizePaymentRecords(records) {
+  return Array.isArray(records) ? records.map((record) => getDefaultPaymentRecord(record)) : [];
+}
+
+function calculatePaymentTotals(summary, records = []) {
+  const normalizedSummary = normalizePaymentSummary(summary);
+  const receivedRecords = normalizePaymentRecords(records).filter((record) => record.status === "Received");
+  const totalReceived = receivedRecords.reduce((sum, record) => sum + parseMoneyValue(record.amount), 0);
+  const advanceReceivedAmount = receivedRecords
+    .filter((record) => record.paymentType === "Advance")
+    .reduce((sum, record) => sum + parseMoneyValue(record.amount), 0);
+  const finalAgreedAmount = parseMoneyValue(normalizedSummary.finalAgreedAmount);
+  const balanceDue = Math.max(0, finalAgreedAmount - totalReceived);
+  return { totalReceived, advanceReceivedAmount, balanceDue };
+}
+
+function suggestPaymentStatus(summary, totals) {
+  if (["Refunded", "Cancelled"].includes(summary.paymentStatus)) {
+    return summary.paymentStatus;
+  }
+
+  if (summary.paymentStatus === "Overdue" && totals.totalReceived < parseMoneyValue(summary.finalAgreedAmount)) {
+    return "Overdue";
+  }
+
+  if (parseMoneyValue(summary.finalAgreedAmount) && totals.totalReceived >= parseMoneyValue(summary.finalAgreedAmount)) {
+    return "Paid in Full";
+  }
+
+  if (totals.totalReceived > 0) {
+    return "Partially Paid";
+  }
+
+  if ((summary.paymentStatus || "Not Started") === "Not Started" && parseMoneyValue(summary.advanceRequiredAmount) > 0) {
+    return "Advance Pending";
+  }
+
+  return summary.paymentStatus || "Not Started";
+}
+
+function getPaymentStatusChip(status) {
+  return PAYMENT_STATUSES.includes(status) ? status : "Not Started";
+}
+
+function getSuggestedPaymentAmountFromQuote(source = {}) {
+  return parseMoneyValue(
+    source.quote_final_quote_amount ||
+      source.quoteFinalQuoteAmount ||
+      source.sourceProspectData?.quote_final_quote_amount ||
+      source.sourceProspectData?.quoteFinalQuoteAmount ||
+      0
+  );
+}
+
+function syncPaymentWithClientActivity(client, nextRecord, previousRecord = null) {
+  const paymentSummary = normalizePaymentSummary(client.paymentSummary, client);
+  const paymentRecords = normalizePaymentRecords(client.paymentRecords);
+  const totals = calculatePaymentTotals(paymentSummary, paymentRecords);
+  let activity = client.activity || [];
+
+  if (nextRecord?.status === "Received" && previousRecord?.status !== "Received") {
+    if (nextRecord.paymentType === "Advance") {
+      activity = addClientActivity({ ...client, activity }, "Advance payment received", "Payments");
+      syncProspectAdvancePaymentMilestone(client);
+    } else if (nextRecord.paymentType === "Final Balance") {
+      activity = addClientActivity({ ...client, activity }, "Final payment received", "Payments");
+    }
+  }
+
+  return {
+    ...client,
+    paymentSummary: {
+      ...paymentSummary,
+      advanceReceivedAmount: totals.advanceReceivedAmount,
+      balanceDue: totals.balanceDue,
+      paymentStatus: suggestPaymentStatus(paymentSummary, totals),
+    },
+    activity,
+  };
+}
+
+function syncProspectAdvancePaymentMilestone(client) {
+  if (!client?.prospectId) {
+    return;
+  }
+
+  const workflow = getProspectWorkflow(client.prospectId);
+  state.prospectWorkflows[client.prospectId] = {
+    ...workflow,
+    milestones: {
+      ...(workflow.milestones || {}),
+      "Advance payment received": true,
+    },
+    updated_at: new Date().toISOString(),
+  };
+  persistProspectWorkflows();
+  recordProspectActivity(client.prospectId, "Advance payment received", "Payments", "advance-payment-received");
 }
 
 function normalizeDocumentChecklist(checklist) {
