@@ -1,5 +1,7 @@
 -- Client Finder Supabase schema preparation.
 -- This schema is for future migration only. The current app still uses localStorage.
+-- It is designed for a clean Supabase SQL Editor run and safe retries during
+-- setup. It does not enable auth, RLS, file upload, or application writes yet.
 
 create extension if not exists "pgcrypto";
 
@@ -35,6 +37,7 @@ create table if not exists users (
   updated_at timestamptz not null default now()
 );
 
+alter table organizations drop constraint if exists organizations_created_by_fkey;
 alter table organizations
   add constraint organizations_created_by_fkey
   foreign key (created_by) references users(id) on delete set null;
@@ -278,10 +281,12 @@ create table if not exists clients (
   updated_at timestamptz not null default now()
 );
 
+alter table follow_ups drop constraint if exists follow_ups_client_id_fkey;
 alter table follow_ups
   add constraint follow_ups_client_id_fkey
   foreign key (client_id) references clients(id) on delete cascade;
 
+alter table quotes drop constraint if exists quotes_client_id_fkey;
 alter table quotes
   add constraint quotes_client_id_fkey
   foreign key (client_id) references clients(id) on delete set null;
@@ -462,42 +467,61 @@ create index if not exists client_support_requests_target_date_idx on client_sup
 
 -- updated_at triggers ---------------------------------------------------------
 
+drop trigger if exists organizations_updated_at on organizations;
 create trigger organizations_updated_at before update on organizations
   for each row execute function update_updated_at_column();
+drop trigger if exists users_updated_at on users;
 create trigger users_updated_at before update on users
   for each row execute function update_updated_at_column();
+drop trigger if exists organization_members_updated_at on organization_members;
 create trigger organization_members_updated_at before update on organization_members
   for each row execute function update_updated_at_column();
+drop trigger if exists prospects_updated_at on prospects;
 create trigger prospects_updated_at before update on prospects
   for each row execute function update_updated_at_column();
+drop trigger if exists saved_prospects_updated_at on saved_prospects;
 create trigger saved_prospects_updated_at before update on saved_prospects
   for each row execute function update_updated_at_column();
+drop trigger if exists search_presets_updated_at on search_presets;
 create trigger search_presets_updated_at before update on search_presets
   for each row execute function update_updated_at_column();
+drop trigger if exists prospect_notes_updated_at on prospect_notes;
 create trigger prospect_notes_updated_at before update on prospect_notes
   for each row execute function update_updated_at_column();
+drop trigger if exists process_milestones_updated_at on process_milestones;
 create trigger process_milestones_updated_at before update on process_milestones
   for each row execute function update_updated_at_column();
+drop trigger if exists follow_ups_updated_at on follow_ups;
 create trigger follow_ups_updated_at before update on follow_ups
   for each row execute function update_updated_at_column();
+drop trigger if exists outreach_templates_updated_at on outreach_templates;
 create trigger outreach_templates_updated_at before update on outreach_templates
   for each row execute function update_updated_at_column();
+drop trigger if exists quotes_updated_at on quotes;
 create trigger quotes_updated_at before update on quotes
   for each row execute function update_updated_at_column();
+drop trigger if exists clients_updated_at on clients;
 create trigger clients_updated_at before update on clients
   for each row execute function update_updated_at_column();
+drop trigger if exists client_onboarding_items_updated_at on client_onboarding_items;
 create trigger client_onboarding_items_updated_at before update on client_onboarding_items
   for each row execute function update_updated_at_column();
+drop trigger if exists client_project_tasks_updated_at on client_project_tasks;
 create trigger client_project_tasks_updated_at before update on client_project_tasks
   for each row execute function update_updated_at_column();
+drop trigger if exists client_handover_items_updated_at on client_handover_items;
 create trigger client_handover_items_updated_at before update on client_handover_items
   for each row execute function update_updated_at_column();
+drop trigger if exists client_documents_updated_at on client_documents;
 create trigger client_documents_updated_at before update on client_documents
   for each row execute function update_updated_at_column();
+drop trigger if exists client_payments_updated_at on client_payments;
 create trigger client_payments_updated_at before update on client_payments
   for each row execute function update_updated_at_column();
+drop trigger if exists client_access_records_updated_at on client_access_records;
 create trigger client_access_records_updated_at before update on client_access_records
   for each row execute function update_updated_at_column();
+drop trigger if exists client_support_requests_updated_at on client_support_requests;
 create trigger client_support_requests_updated_at before update on client_support_requests
   for each row execute function update_updated_at_column();
 

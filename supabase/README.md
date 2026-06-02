@@ -17,6 +17,22 @@ These files prepare Client Finder for a future Supabase migration. The current r
 
 Do not run this against production data until RLS policies and auth behavior are fully tested.
 
+## Manual Verification Checklist
+
+Use this checklist when creating the Supabase project:
+
+- Create a Supabase project.
+- Open the SQL Editor.
+- Run `supabase/schema.sql`.
+- Run `supabase/seed.sql` only if demo data is desired.
+- Confirm core tables exist, including `organizations`, `prospects`, `saved_prospects`, `clients`, `client_documents`, `client_payments`, `client_access_records`, and `client_support_requests`.
+- Confirm `updated_at` triggers exist on major mutable tables.
+- Copy the Project URL.
+- Copy the anon public key.
+- Do not copy the service role key into frontend code.
+- Add future config values in Vercel or a runtime config source.
+- Keep `CLIENT_FINDER_STORAGE_MODE=localStorage` until a later migration task explicitly enables Supabase reads/writes.
+
 ## Future Environment Variables
 
 Add these later when the app gets Supabase client configuration:
@@ -24,6 +40,7 @@ Add these later when the app gets Supabase client configuration:
 ```text
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
+CLIENT_FINDER_STORAGE_MODE=localStorage
 SUPABASE_STORAGE_BUCKET=
 ```
 
@@ -34,6 +51,8 @@ SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 Never expose `SUPABASE_SERVICE_ROLE_KEY` to frontend/browser code. Do not commit real Supabase keys.
+
+For the current static frontend, these names are read from `window.CLIENT_FINDER_CONFIG` or a local browser override for development. They are not read directly from Node-style `process.env` in the browser. If a build tool is added later, document any public frontend prefix required by that tool.
 
 ## Current Migration Status
 

@@ -53,9 +53,30 @@ export function createSupabaseClientPlaceholder() {
 }
 
 export function getStorageStatus() {
+  const supabaseStatus = getSupabaseStatus();
   return {
     configuredMode: getConfiguredStorageMode(),
     activeMode: getActiveStorageMode(),
-    supabaseConfigured: isSupabaseConfigured(),
+    supabaseConfigured: supabaseStatus.configured,
+    reason: supabaseStatus.reason,
+  };
+}
+
+export function getSupabaseStatus() {
+  const config = getSupabaseConfig();
+  const missing = [];
+  if (!config.url) {
+    missing.push("SUPABASE_URL");
+  }
+  if (!config.anonKey) {
+    missing.push("SUPABASE_ANON_KEY");
+  }
+
+  const configured = missing.length === 0;
+  return {
+    configured,
+    storageMode: getActiveStorageMode(),
+    configuredStorageMode: getConfiguredStorageMode(),
+    reason: configured ? "Supabase URL and anon key are configured." : `Missing ${missing.join(" and ")}.`,
   };
 }
