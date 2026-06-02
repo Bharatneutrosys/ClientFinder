@@ -43,8 +43,27 @@ This is preparation only.
 - Supabase schema: documented and ready to create later.
 - Authentication: not added yet.
 - File upload: not added yet.
-- Next planned step: add Supabase client config behind a feature flag with localStorage fallback.
+- Supabase client config exists as a safe browser placeholder.
+- Storage mode defaults to `localStorage`.
 - localStorage should remain the fallback until migration is complete and verified.
+
+## Storage Mode
+
+The viewer supports a storage mode flag for future migration:
+
+```text
+CLIENT_FINDER_STORAGE_MODE=localStorage
+```
+
+Supported planned values:
+
+- `localStorage`: current default and active implementation.
+- `supabase`: future Supabase implementation; currently falls back to localStorage if Supabase is not configured.
+- `hybrid`: future sync mode; currently falls back to localStorage if Supabase is not configured.
+
+For the static viewer, runtime config can be provided later through `window.CLIENT_FINDER_CONFIG`. The app also supports a local browser override named `CLIENT_FINDER_STORAGE_MODE` for development testing. If `SUPABASE_URL` or `SUPABASE_ANON_KEY` is missing, the app automatically uses localStorage and does not show user-facing errors.
+
+Next planned task: wire real Supabase reads/writes behind this feature flag while preserving localStorage fallback.
 
 ## Security Notes
 

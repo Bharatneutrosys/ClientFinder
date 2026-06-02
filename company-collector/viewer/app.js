@@ -1,4 +1,5 @@
 import { createScanner, SCAN_STATUS } from "./scanner.js";
+import { storageService } from "./storageService.js";
 import { renderDetailPanel, renderResultsView } from "./ui.js";
 
 const DEFAULT_INDUSTRY = "Salon & Beauty";
@@ -542,6 +543,7 @@ const elements = {
   detailModal: document.querySelector("#detail-modal"),
   closeDetailButton: document.querySelector("#close-detail-button"),
   savedSearches: document.querySelector("#saved-searches"),
+  storageStatus: document.querySelector("#storage-status"),
   savedSearchCount: document.querySelector("#saved-search-count"),
   industryNav: [...document.querySelectorAll("[data-industry-nav]")],
   presetButtons: [...document.querySelectorAll("[data-search-preset]")],
@@ -1279,6 +1281,19 @@ function render() {
   renderTodayFollowups();
   renderBatchProgress();
   renderBulkProgress();
+  renderStorageStatus();
+}
+
+function renderStorageStatus() {
+  if (!elements.storageStatus) {
+    return;
+  }
+
+  const status = storageService.getStatus();
+  const modeLabel = status.activeMode === "localStorage" ? "LocalStorage" : titleCase(status.activeMode);
+  elements.storageStatus.textContent = `Storage Mode: ${modeLabel} - Supabase: ${
+    status.supabaseConfigured ? "Configured" : "Not Configured"
+  }`;
 }
 
 function renderClientsView() {
@@ -7860,16 +7875,11 @@ function persistHiddenProspects() {
 }
 
 function readLocalJson(key, fallbackValue) {
-  try {
-    const raw = localStorage.getItem(key);
-    return JSON.parse(raw || JSON.stringify(fallbackValue));
-  } catch (error) {
-    return fallbackValue;
-  }
+  return storageService.readJson(key, fallbackValue);
 }
 
 function writeLocalJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  storageService.writeJson(key, value);
 }
 
 function getTodayDateKey() {

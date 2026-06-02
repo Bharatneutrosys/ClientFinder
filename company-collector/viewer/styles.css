@@ -185,6 +185,10 @@ a {
   line-height: 1.4;
 }
 
+.storage-status-panel {
+  margin-top: auto;
+}
+
 .workspace {
   padding: 14px;
   display: flex;
