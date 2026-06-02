@@ -78,6 +78,17 @@
       <main class="workspace">
         <header class="topbar sticky-topbar">
           <div class="search-row">
+            <label class="search-field">
+              <span>Search Mode</span>
+              <select id="search-mode-filter">
+                <option value="client_acquisition" selected>Client Acquisition</option>
+                <option value="marketing_leads">Marketing Leads</option>
+                <option value="vendor_supply">Vendor / Supply Search</option>
+                <option value="staffing_consulting">Staffing / Consulting Research</option>
+                <option value="local_research">Local Business Research</option>
+              </select>
+            </label>
+
             <label class="search-field search-field-wide">
               <span>Business Type</span>
               <select id="global-search"></select>
@@ -113,35 +124,13 @@
               </select>
             </label>
 
-            <label class="search-field">
-              <span>Mobile App Condition</span>
-              <select id="mobile-app-condition-filter">
-                <option value="" selected>Any</option>
-                <option value="no_mobile_app">Has Mobile App = No</option>
-                <option value="has_mobile_app">Has Mobile App = Yes</option>
-                <option value="booking_app_only">Booking App Only</option>
-                <option value="marketplace_app_only">Marketplace App Only</option>
-                <option value="unknown">Unknown</option>
-              </select>
-            </label>
-
             <div class="search-actions">
               <button id="search-button" class="primary-btn" type="button">Search</button>
               <button id="filters-button" class="secondary-btn filters-toggle" type="button" aria-expanded="false" aria-controls="filters-menu">More Filters</button>
               <button id="add-test-prospect-button" class="secondary-btn" type="button">Add Test Prospect</button>
             </div>
           </div>
-          <div class="preset-row" aria-label="Quick search presets">
-            <button class="preset-chip active" type="button" data-business-group="Salon & Beauty" data-business-type="Salon">Salon</button>
-            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Construction">Construction</button>
-            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Plumber">Plumber</button>
-            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Painter">Painter</button>
-            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Printing">Printing</button>
-            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Restaurant">Restaurant</button>
-            <button class="preset-chip" type="button" data-business-group="Home Services" data-business-type="Cleaning">Cleaning</button>
-            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Dental Clinic">Dental Clinic</button>
-            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Auto Repair">Auto Repair</button>
-            <button class="preset-chip" type="button" data-business-group="Local Services" data-business-type="Daycare">Daycare</button>
+          <div id="preset-row" class="preset-row" aria-label="Quick search presets">
           </div>
         </header>
 
@@ -255,12 +244,83 @@
                     <label class="chip-toggle menu-chip"><input id="show-hidden-filter" type="checkbox" /><span>Show hidden</span></label>
                   </div>
                   <label class="inline-field filters-source-field">
+                    <span>Keyword / Custom Search Term</span>
+                    <input id="keyword-filter" type="search" placeholder="Optional custom keyword" />
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Radius</span>
+                    <select id="radius-filter">
+                      <option value="">Any radius</option>
+                      <option value="5">5 miles</option>
+                      <option value="10">10 miles</option>
+                      <option value="25">25 miles</option>
+                      <option value="50">50 miles</option>
+                    </select>
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Mobile App Condition</span>
+                    <select id="mobile-app-condition-filter">
+                      <option value="" selected>Any</option>
+                      <option value="has_mobile_app">Has Mobile App</option>
+                      <option value="no_mobile_app">No Mobile App</option>
+                      <option value="booking_app_only">Booking App Only</option>
+                      <option value="marketplace_app_only">Marketplace App Only</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Booking System Condition</span>
+                    <select id="booking-system-condition-filter">
+                      <option value="" selected>Any</option>
+                      <option value="has_booking">Has Booking System</option>
+                      <option value="no_booking">No Booking System</option>
+                      <option value="booking_platform_only">Booking Platform Only</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Online Payment Condition</span>
+                    <select id="online-payment-condition-filter">
+                      <option value="" selected>Any</option>
+                      <option value="has_online_payment">Has Online Payment</option>
+                      <option value="no_online_payment">No Online Payment</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Social Presence Condition</span>
+                    <select id="social-presence-condition-filter">
+                      <option value="" selected>Any</option>
+                      <option value="has_social">Has Social Presence</option>
+                      <option value="no_social">No Social Presence</option>
+                      <option value="social_only">Social Only</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Phone Available</span>
+                    <select id="phone-available-filter">
+                      <option value="" selected>Any</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Minimum Rating</span>
+                    <input id="minimum-rating-filter" type="number" min="0" max="5" step="0.1" placeholder="Any" />
+                  </label>
+                  <label class="inline-field filters-source-field">
+                    <span>Minimum Review Count</span>
+                    <input id="minimum-review-count-filter" type="number" min="0" step="1" placeholder="Any" />
+                  </label>
+                  <label class="inline-field filters-source-field">
                     <span>Source</span>
                     <select id="source-filter">
-                      <option value="">All sources</option>
-                      <option value="google_places">Google</option>
-                      <option value="serp_api">SerpAPI</option>
-                      <option value="fallback_search">Fallback</option>
+                      <option value="">Any</option>
+                      <option value="google_places">Google Places</option>
+                      <option value="manual">Manual</option>
+                      <option value="saved">Saved</option>
+                      <option value="future_enrichment">Future Enrichment</option>
                     </select>
                   </label>
                   <label class="inline-field filters-source-field">

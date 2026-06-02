@@ -1,8 +1,17 @@
 import { createScanner, SCAN_STATUS } from "./scanner.js";
+import {
+  BUSINESS_TYPE_GROUPS,
+  DEFAULT_SEARCH_MODE,
+  QUICK_PRESETS,
+  SEARCH_MODES,
+  getBusinessTypePreset,
+  getDefaultFiltersForBusinessType,
+  getSearchMode,
+} from "./searchConfig.js";
 import { storageService } from "./storageService.js";
 import { renderDetailPanel, renderResultsView } from "./ui.js";
 
-const DEFAULT_INDUSTRY = "Salon & Beauty";
+const DEFAULT_INDUSTRY = "Beauty & Wellness";
 const DEFAULT_SEARCH_KEYWORD = "Salon";
 const DEFAULT_STATE = "TX";
 const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
@@ -20,46 +29,6 @@ const DEFAULT_BATCH_CITIES = [
   { city: "San Antonio", state: "TX" },
   { city: "Fort Worth", state: "TX" },
 ];
-
-const BUSINESS_TYPE_GROUPS = {
-  "Salon & Beauty": {
-    query: "local beauty services",
-    tags: ["Local Beauty", "Website Prospect"],
-    types: {
-      Salon: "salon beauty salon local beauty services",
-      "Hair Salon": "hair salon beauty salon stylist local beauty services",
-      "Nail Salon": "nail salon manicure pedicure local beauty services",
-      Barbershop: "barbershop barber men's grooming local beauty services",
-      "Lash Studio": "lash studio eyelash extensions local beauty services",
-      "Brow Studio": "brow studio eyebrow threading waxing local beauty services",
-      Spa: "spa day spa facial massage local beauty services",
-      "Med Spa": "med spa medical spa aesthetics local beauty services",
-    },
-  },
-  "Home Services": {
-    query: "home services contractor local service business",
-    tags: ["Home Services", "Local Contractor"],
-    types: {
-      Construction: "construction contractor building services local contractor",
-      Plumber: "plumber plumbing contractor local home services",
-      Painter: "painter painting contractor local home services",
-      Roofing: "roofing roofer roofing contractor local home services",
-      Cleaning: "cleaning company house cleaning commercial cleaning local services",
-      Landscaping: "landscaping lawn care landscape contractor local home services",
-    },
-  },
-  "Local Services": {
-    query: "local service business",
-    tags: ["Local Services", "Main Street Business"],
-    types: {
-      Printing: "printing company print shop local business printing services",
-      "Auto Repair": "auto repair mechanic auto service local business",
-      Daycare: "daycare childcare preschool local services",
-      "Dental Clinic": "dental clinic dentist local healthcare services",
-      Restaurant: "restaurant local dining food business",
-    },
-  },
-};
 
 const PROSPECT_STAGES = [
   "New Lead",
@@ -462,12 +431,21 @@ const scanner = createScanner();
 let clientSyncSnapshot = new Map();
 
 const elements = {
+  searchModeFilter: document.querySelector("#search-mode-filter"),
   globalSearch: document.querySelector("#global-search"),
   industryFilter: document.querySelector("#industry-filter"),
   stateFilter: document.querySelector("#state-filter"),
   cityFilter: document.querySelector("#city-filter"),
   websiteConditionFilter: document.querySelector("#website-condition-filter"),
   mobileAppConditionFilter: document.querySelector("#mobile-app-condition-filter"),
+  bookingSystemConditionFilter: document.querySelector("#booking-system-condition-filter"),
+  onlinePaymentConditionFilter: document.querySelector("#online-payment-condition-filter"),
+  socialPresenceConditionFilter: document.querySelector("#social-presence-condition-filter"),
+  phoneAvailableFilter: document.querySelector("#phone-available-filter"),
+  keywordFilter: document.querySelector("#keyword-filter"),
+  radiusFilter: document.querySelector("#radius-filter"),
+  minimumRatingFilter: document.querySelector("#minimum-rating-filter"),
+  minimumReviewCountFilter: document.querySelector("#minimum-review-count-filter"),
   sourceFilter: document.querySelector("#source-filter"),
   leadScoreFilter: document.querySelector("#lead-score-filter"),
   reviewStatusFilter: document.querySelector("#review-status-filter"),
@@ -544,6 +522,7 @@ const elements = {
   detailModal: document.querySelector("#detail-modal"),
   closeDetailButton: document.querySelector("#close-detail-button"),
   savedSearches: document.querySelector("#saved-searches"),
+  presetRow: document.querySelector("#preset-row"),
   storageStatus: document.querySelector("#storage-status"),
   syncSavedProspectsButton: document.querySelector("#sync-saved-prospects-button"),
   syncClientsButton: document.querySelector("#sync-clients-button"),
@@ -560,7 +539,9 @@ await initialize();
 
 async function initialize() {
   bindEvents();
+  populateSearchModes();
   populateBusinessTypeGroups();
+  renderPresetChips();
   populateSavedWorkqueueFilters();
   populateStates();
   await loadTargetCities();
@@ -648,11 +629,20 @@ function bindEvents() {
   });
 
   [
+    elements.searchModeFilter,
     elements.globalSearch,
     elements.stateFilter,
     elements.cityFilter,
     elements.websiteConditionFilter,
     elements.mobileAppConditionFilter,
+    elements.bookingSystemConditionFilter,
+    elements.onlinePaymentConditionFilter,
+    elements.socialPresenceConditionFilter,
+    elements.phoneAvailableFilter,
+    elements.keywordFilter,
+    elements.radiusFilter,
+    elements.minimumRatingFilter,
+    elements.minimumReviewCountFilter,
     elements.sourceFilter,
     elements.leadScoreFilter,
   elements.reviewStatusFilter,
@@ -687,6 +677,11 @@ function bindEvents() {
     applyFilters();
   });
 
+  elements.keywordFilter?.addEventListener("input", () => {
+    state.currentPage = 1;
+    applyFilters();
+  });
+
   elements.industryFilter.addEventListener("change", () => {
     populateBusinessTypes(elements.industryFilter.value, getDefaultBusinessType(elements.industryFilter.value));
     state.currentPage = 1;
@@ -717,6 +712,30 @@ function bindEvents() {
         button.getAttribute("data-business-group") || DEFAULT_INDUSTRY,
         button.getAttribute("data-business-type") || DEFAULT_SEARCH_KEYWORD
       );
+      state.currentPage = 1;
+      applyFilters();
+    });
+  });
+
+  elements.presetRow?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-search-preset]");
+    if (!button) {
+      return;
+    }
+
+    setBusinessTypeSelection(
+      button.getAttribute("data-business-group") || DEFAULT_INDUSTRY,
+      button.getAttribute("data-business-type") || DEFAULT_SEARCH_KEYWORD,
+      { applyDefaults: true }
+    );
+    state.currentPage = 1;
+    applyFilters();
+  });
+
+  elements.appViewButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeView = button.getAttribute("data-app-view") || "discovery";
+      state.selectedClientId = null;
       state.currentPage = 1;
       applyFilters();
     });
@@ -785,7 +804,7 @@ async function handleSearch() {
     return;
   }
 
-  elements.statusMessage.textContent = `Searching ${filters.cityLabel}, ${filters.state} for ${filters.keywordLabel || DEFAULT_SEARCH_KEYWORD}...`;
+  elements.statusMessage.textContent = `Searching ${filters.cityLabel}, ${filters.state} for ${filters.customKeyword || filters.keywordLabel || DEFAULT_SEARCH_KEYWORD}...`;
   elements.searchButton.disabled = true;
   if (elements.collectMoreButton) {
     elements.collectMoreButton.disabled = true;
@@ -793,7 +812,7 @@ async function handleSearch() {
 
   try {
     const payload = await searchLiveProspects({
-      businessType: filters.keywordLabel || DEFAULT_SEARCH_KEYWORD,
+      businessType: buildSearchKeyword(filters),
       location: filters.cityLabel,
       state: filters.state,
       websiteCondition: filters.websiteCondition,
@@ -801,7 +820,7 @@ async function handleSearch() {
 
     state.companies = augmentCompaniesWithScannerData(
       mergeManualProspects(
-        payload.prospects.map((prospect) => mapLiveProspectToCompany(prospect)),
+        payload.prospects.map((prospect) => mapLiveProspectToCompany(prospect, filters)),
         state.manualProspects
       )
     );
@@ -1123,6 +1142,43 @@ function applyFilters() {
         return false;
       }
 
+      if (
+        state.activeView === "discovery" &&
+        !matchesBookingSystemCondition(company, filters.bookingSystemCondition)
+      ) {
+        return false;
+      }
+
+      if (
+        state.activeView === "discovery" &&
+        !matchesOnlinePaymentCondition(company, filters.onlinePaymentCondition)
+      ) {
+        return false;
+      }
+
+      if (
+        state.activeView === "discovery" &&
+        !matchesSocialPresenceCondition(company, filters.socialPresenceCondition)
+      ) {
+        return false;
+      }
+
+      if (state.activeView === "discovery" && !matchesPhoneAvailable(company, filters.phoneAvailable)) {
+        return false;
+      }
+
+      if (state.activeView === "discovery" && filters.minimumRating > 0 && Number(company.rating || 0) < filters.minimumRating) {
+        return false;
+      }
+
+      if (
+        state.activeView === "discovery" &&
+        filters.minimumReviewCount > 0 &&
+        Number(company.reviewCount || company.reviews || 0) < filters.minimumReviewCount
+      ) {
+        return false;
+      }
+
       if (state.activeView === "discovery" && filters.keyword) {
         const haystack = [
           company.name,
@@ -1144,7 +1200,7 @@ function applyFilters() {
         }
       }
 
-      if (filters.source && company.source !== filters.source) {
+      if (filters.source && !matchesSource(company, filters.source)) {
         return false;
       }
 
@@ -1278,6 +1334,7 @@ function render() {
       onToggleSavedCompany: toggleSavedCompany,
       onHideCompany: hideCompany,
       mode: state.activeView,
+      searchMode: getActiveFilters().searchMode,
     });
   }
 
@@ -1586,18 +1643,27 @@ async function handleBatchCollect() {
 
 function handleSaveSearch() {
   const filters = getActiveFilters();
-  const label = `${filters.keywordLabel || "Any business"} - ${filters.cityLabel || "All cities"}${filters.state ? `, ${filters.state}` : ""}`;
+  const label = getSearchSummary(filters);
   const entry = {
     id: `search-${Date.now()}`,
     label,
     filters: {
+      searchMode: filters.searchMode || DEFAULT_SEARCH_MODE,
       globalSearch: filters.keywordLabel || "",
+      keyword: filters.customKeyword || "",
       industry: filters.industry || "",
       city: filters.cityLabel || "",
       state: filters.state || "",
+      radius: filters.radius || "",
       source: filters.source || "",
       websiteCondition: filters.websiteCondition || "",
       mobileAppCondition: filters.mobileAppCondition || "",
+      bookingSystemCondition: filters.bookingSystemCondition || "",
+      onlinePaymentCondition: filters.onlinePaymentCondition || "",
+      socialPresenceCondition: filters.socialPresenceCondition || "",
+      phoneAvailable: filters.phoneAvailable || "",
+      minimumRating: filters.minimumRating || "",
+      minimumReviewCount: filters.minimumReviewCount || "",
     },
   };
 
@@ -4877,11 +4943,38 @@ function renderSavedSearches() {
         saved.filters.industry || DEFAULT_INDUSTRY,
         saved.filters.globalSearch || DEFAULT_SEARCH_KEYWORD
       );
+      if (elements.searchModeFilter) {
+        elements.searchModeFilter.value = saved.filters.searchMode || DEFAULT_SEARCH_MODE;
+      }
+      if (elements.keywordFilter) {
+        elements.keywordFilter.value = saved.filters.keyword || "";
+      }
       elements.cityFilter.value = saved.filters.city;
       elements.stateFilter.value = saved.filters.state;
+      if (elements.radiusFilter) {
+        elements.radiusFilter.value = saved.filters.radius || "";
+      }
       elements.sourceFilter.value = saved.filters.source;
       elements.websiteConditionFilter.value = saved.filters.websiteCondition || "";
       elements.mobileAppConditionFilter.value = saved.filters.mobileAppCondition || "";
+      if (elements.bookingSystemConditionFilter) {
+        elements.bookingSystemConditionFilter.value = saved.filters.bookingSystemCondition || "";
+      }
+      if (elements.onlinePaymentConditionFilter) {
+        elements.onlinePaymentConditionFilter.value = saved.filters.onlinePaymentCondition || "";
+      }
+      if (elements.socialPresenceConditionFilter) {
+        elements.socialPresenceConditionFilter.value = saved.filters.socialPresenceCondition || "";
+      }
+      if (elements.phoneAvailableFilter) {
+        elements.phoneAvailableFilter.value = saved.filters.phoneAvailable || "";
+      }
+      if (elements.minimumRatingFilter) {
+        elements.minimumRatingFilter.value = saved.filters.minimumRating || "";
+      }
+      if (elements.minimumReviewCountFilter) {
+        elements.minimumReviewCountFilter.value = saved.filters.minimumReviewCount || "";
+      }
       elements.leadScoreFilter.value = saved.filters.leadScore || "";
       elements.reviewStatusFilter.value = saved.filters.reviewStatus || "";
       elements.contactTypeFilter.value = saved.filters.contactType || "";
@@ -5036,17 +5129,27 @@ function getTotalPages() {
 
 function getActiveFilters() {
   const keywordLabel = String(elements.globalSearch.value || "").trim();
+  const customKeyword = String(elements.keywordFilter?.value || "").trim();
 
   return {
+    searchMode: elements.searchModeFilter?.value || DEFAULT_SEARCH_MODE,
     state: elements.stateFilter.value,
     city: String(elements.cityFilter.value || "").trim().toLowerCase(),
     cityLabel: String(elements.cityFilter.value || "").trim(),
-    keyword: keywordLabel.toLowerCase(),
+    keyword: (customKeyword || keywordLabel).toLowerCase(),
     keywordLabel,
+    customKeyword,
     industry: elements.industryFilter.value || "",
+    radius: elements.radiusFilter?.value || "",
     source: elements.sourceFilter.value,
     websiteCondition: elements.websiteConditionFilter.value || "",
     mobileAppCondition: elements.mobileAppConditionFilter.value || "",
+    bookingSystemCondition: elements.bookingSystemConditionFilter?.value || "",
+    onlinePaymentCondition: elements.onlinePaymentConditionFilter?.value || "",
+    socialPresenceCondition: elements.socialPresenceConditionFilter?.value || "",
+    phoneAvailable: elements.phoneAvailableFilter?.value || "",
+    minimumRating: Number(elements.minimumRatingFilter?.value || 0),
+    minimumReviewCount: Number(elements.minimumReviewCountFilter?.value || 0),
     leadScore: elements.leadScoreFilter.value,
     reviewStatus: elements.reviewStatusFilter.value,
     contactType: elements.contactTypeFilter.value,
@@ -5172,11 +5275,156 @@ function matchesMobileAppCondition(company, condition) {
   return true;
 }
 
+function formatBookingSystemCondition(value) {
+  if (value === "has_booking") return "Has Booking System";
+  if (value === "no_booking") return "No Booking System";
+  if (value === "booking_platform_only") return "Booking Platform Only";
+  if (value === "unknown") return "Unknown";
+  return "Any";
+}
+
+function matchesBookingSystemCondition(company, condition) {
+  if (!condition) {
+    return true;
+  }
+
+  const platform = String(company.bookingPlatform || company.booking_platform || "").trim();
+  const hasPlatform = Boolean(platform && platform !== "Unknown");
+  const websiteStatus = normalizeWebsiteStatus(company.websiteStatus) || deriveWebsiteStatus(company);
+  const explicitHasBooking = readBooleanish(company.hasBookingSystem ?? company.has_booking_system);
+
+  if (condition === "has_booking") {
+    return explicitHasBooking === true || hasPlatform || websiteStatus === "Booking Link Only";
+  }
+  if (condition === "no_booking") {
+    return explicitHasBooking === false || (!hasPlatform && websiteStatus !== "Booking Link Only");
+  }
+  if (condition === "booking_platform_only") {
+    return hasPlatform || websiteStatus === "Booking Link Only";
+  }
+  if (condition === "unknown") {
+    return explicitHasBooking === null && !hasPlatform && websiteStatus === "Unknown";
+  }
+  return true;
+}
+
+function formatOnlinePaymentCondition(value) {
+  if (value === "has_online_payment") return "Has Online Payment";
+  if (value === "no_online_payment") return "No Online Payment";
+  if (value === "unknown") return "Unknown";
+  return "Any";
+}
+
+function matchesOnlinePaymentCondition(company, condition) {
+  if (!condition) {
+    return true;
+  }
+
+  const value = readBooleanish(company.hasOnlinePayment ?? company.onlinePaymentAvailable ?? company.has_online_payment);
+  if (condition === "has_online_payment") {
+    return value === true;
+  }
+  if (condition === "no_online_payment") {
+    return value === false;
+  }
+  if (condition === "unknown") {
+    return value === null;
+  }
+  return true;
+}
+
+function formatSocialPresenceCondition(value) {
+  if (value === "has_social") return "Has Social Presence";
+  if (value === "no_social") return "No Social Presence";
+  if (value === "social_only") return "Social Only";
+  if (value === "unknown") return "Unknown";
+  return "Any";
+}
+
+function matchesSocialPresenceCondition(company, condition) {
+  if (!condition) {
+    return true;
+  }
+
+  const socialPlatform = String(company.socialPlatform || company.social_platform || "").trim();
+  const hasSocial = Boolean(socialPlatform && socialPlatform !== "Unknown") || looksLikeSocialOrBookingUrl(company.website || "");
+  const websiteStatus = normalizeWebsiteStatus(company.websiteStatus) || deriveWebsiteStatus(company);
+
+  if (condition === "has_social") {
+    return hasSocial || websiteStatus === "Social Only";
+  }
+  if (condition === "no_social") {
+    return !hasSocial && websiteStatus !== "Social Only";
+  }
+  if (condition === "social_only") {
+    return websiteStatus === "Social Only";
+  }
+  if (condition === "unknown") {
+    return !hasSocial && websiteStatus === "Unknown";
+  }
+  return true;
+}
+
+function matchesPhoneAvailable(company, condition) {
+  if (!condition) {
+    return true;
+  }
+
+  const hasPhone = Boolean(String(company.phone || "").trim()) || Boolean(company.has_phone);
+  if (condition === "yes") {
+    return hasPhone;
+  }
+  if (condition === "no") {
+    return !hasPhone;
+  }
+  return true;
+}
+
+function matchesSource(company, source) {
+  if (!source) {
+    return true;
+  }
+
+  const normalizedSource = String(company.source || "").trim().toLowerCase();
+  if (source === "google_places") {
+    return ["google_places", "google", "places"].includes(normalizedSource);
+  }
+  if (source === "saved") {
+    return Boolean(findSavedProspectId(company)) || Boolean(company.is_saved_prospect);
+  }
+  return normalizedSource === source;
+}
+
+function populateSearchModes() {
+  if (!elements.searchModeFilter) {
+    return;
+  }
+
+  elements.searchModeFilter.innerHTML = Object.entries(SEARCH_MODES)
+    .map(([value, mode]) => `<option value="${escapeAttribute(value)}">${escapeHtml(mode.label)}</option>`)
+    .join("");
+  elements.searchModeFilter.value = DEFAULT_SEARCH_MODE;
+}
+
+function renderPresetChips() {
+  if (!elements.presetRow) {
+    return;
+  }
+
+  elements.presetRow.innerHTML = QUICK_PRESETS.map(([group, type]) => {
+    const preset = getBusinessTypePreset(group, type);
+    const label = preset?.label || type;
+    return `<button class="preset-chip" type="button" data-search-preset="${escapeAttribute(type)}" data-business-group="${escapeAttribute(group)}" data-business-type="${escapeAttribute(type)}">${escapeHtml(label)}</button>`;
+  }).join("");
+  elements.presetButtons = [...document.querySelectorAll("[data-search-preset]")];
+  syncPresetChips();
+}
+
 function populateBusinessTypeGroups() {
   elements.industryFilter.innerHTML = Object.keys(BUSINESS_TYPE_GROUPS)
     .map((group) => `<option value="${escapeAttribute(group)}">${escapeHtml(group)}</option>`)
     .join("");
-  setBusinessTypeSelection(DEFAULT_INDUSTRY, DEFAULT_SEARCH_KEYWORD);
+  setBusinessTypeSelection(DEFAULT_INDUSTRY, DEFAULT_SEARCH_KEYWORD, { applyDefaults: true });
 }
 
 function populateBusinessTypes(group, selectedType = "") {
@@ -5190,11 +5438,31 @@ function populateBusinessTypes(group, selectedType = "") {
   elements.globalSearch.value = nextType;
 }
 
-function setBusinessTypeSelection(group, type) {
+function setBusinessTypeSelection(group, type, options = {}) {
   const nextGroup = BUSINESS_TYPE_GROUPS[group] ? group : DEFAULT_INDUSTRY;
+  const nextType = normalizeBusinessTypeForGroup(nextGroup, type);
   elements.industryFilter.value = nextGroup;
-  populateBusinessTypes(nextGroup, normalizeBusinessTypeForGroup(nextGroup, type));
+  populateBusinessTypes(nextGroup, nextType);
+  if (options.applyDefaults) {
+    applyBusinessTypeDefaults(nextGroup, nextType);
+  }
   syncPresetChips();
+}
+
+function applyBusinessTypeDefaults(group, type) {
+  const defaults = getDefaultFiltersForBusinessType(group, type);
+  if (elements.searchModeFilter && defaults.searchMode) {
+    elements.searchModeFilter.value = defaults.searchMode;
+  }
+  if (elements.websiteConditionFilter) {
+    elements.websiteConditionFilter.value = defaults.websiteCondition || "";
+  }
+  if (elements.mobileAppConditionFilter) {
+    elements.mobileAppConditionFilter.value = defaults.mobileAppCondition || "";
+  }
+  if (elements.bookingSystemConditionFilter) {
+    elements.bookingSystemConditionFilter.value = defaults.bookingSystemCondition || "";
+  }
 }
 
 function getDefaultBusinessType(group) {
@@ -5276,13 +5544,14 @@ function buildTestProspect(filters) {
   const city = filters.cityLabel || "Farmers Branch";
   const stateCode = filters.state || DEFAULT_STATE;
   const businessType = filters.keywordLabel || DEFAULT_SEARCH_KEYWORD;
+  const mode = getSearchMode(filters.searchMode);
 
   return {
     id: "manual-luxe-beauty-studio-farmers-branch-tx",
     name: "Luxe Beauty Studio",
     keyword: businessType,
     industry: DEFAULT_INDUSTRY,
-    industry_tags: ["Salon & Beauty", "Local Beauty", "Website Prospect"],
+    industry_tags: ["Beauty & Wellness", "Local Beauty", "Website Prospect"],
     city,
     state: stateCode,
     address: `123 Valley View Ln, ${city}, ${stateCode}`,
@@ -5306,6 +5575,8 @@ function buildTestProspect(filters) {
     scoreReasons: ["No owned website", "Strong reviews", "Phone available", "Address available"],
     reasonChips: ["No owned website", "Strong reviews", "Phone available", "Address available"],
     source: "manual",
+    searchMode: filters.searchMode || DEFAULT_SEARCH_MODE,
+    recordPurpose: mode.recordPurpose,
     source_url: "",
     base_lead_score: 92,
     lead_score: 95,
@@ -5385,9 +5656,10 @@ async function searchLiveProspects({ businessType, location, state: stateCode, w
   };
 }
 
-function mapLiveProspectToCompany(prospect) {
+function mapLiveProspectToCompany(prospect, filters = getActiveFilters()) {
   const score = Number(prospect.opportunityScore || 0);
   const websiteStatus = normalizeWebsiteStatus(prospect.websiteStatus) || "Unknown";
+  const mode = getSearchMode(filters.searchMode);
 
   return {
     id: prospect.id || prospect.placeId || makeStableManualId(prospect.businessName, prospect.address),
@@ -5423,6 +5695,8 @@ function mapLiveProspectToCompany(prospect) {
     rating: Number(prospect.rating || 0),
     reviews: Number(prospect.reviewCount || 0),
     reviewCount: Number(prospect.reviewCount || 0),
+    searchMode: filters.searchMode || DEFAULT_SEARCH_MODE,
+    recordPurpose: mode.recordPurpose,
     source: "google_places",
     source_url: prospect.googleProfileUrl || prospect.mapsUrl || "",
     base_lead_score: score,
@@ -5622,6 +5896,8 @@ function applyProspectWorkflow(company) {
           ? company.outreach_templates
           : {},
     outreach_tone: workflow.outreach_tone || company.outreach_tone || "Professional",
+    searchMode: workflow.searchMode || company.searchMode || DEFAULT_SEARCH_MODE,
+    recordPurpose: workflow.recordPurpose || company.recordPurpose || getSearchMode(workflow.searchMode || company.searchMode).recordPurpose,
     communication_logs: allCommunicationLogs,
     activity_log: activityLog.length ? activityLog : Array.isArray(company.activity_log) ? company.activity_log : [],
     notes,
@@ -6886,6 +7162,8 @@ function ensureProspectWorkflow(companyId, company) {
     websiteCheckedAt: company?.websiteCheckedAt || "",
     outreach_templates: company?.outreach_templates && typeof company.outreach_templates === "object" ? company.outreach_templates : {},
     outreach_tone: company?.outreach_tone || "Professional",
+    searchMode: company?.searchMode || DEFAULT_SEARCH_MODE,
+    recordPurpose: company?.recordPurpose || getSearchMode(company?.searchMode).recordPurpose,
     archived: Boolean(company?.archived),
     archived_at: company?.archived_at || "",
     activity_log: Array.isArray(company?.activity_log) ? company.activity_log : [],
@@ -7194,6 +7472,8 @@ function ensureSavedProspect(company) {
   const workflow = getProspectWorkflow(company.id);
   const nextStage = !workflow.prospect_stage || workflow.prospect_stage === "New Lead" ? "Saved" : workflow.prospect_stage;
   const now = new Date().toISOString();
+  const filters = getActiveFilters();
+  const searchMode = company.searchMode || filters.searchMode || DEFAULT_SEARCH_MODE;
   state.prospectWorkflows[company.id] = {
     ...workflow,
     milestones: {
@@ -7203,6 +7483,8 @@ function ensureSavedProspect(company) {
     currentStage: nextStage,
     prospect_stage: nextStage,
     quote_status: workflow.quote_status || "Not Started",
+    searchMode: workflow.searchMode || searchMode,
+    recordPurpose: workflow.recordPurpose || company.recordPurpose || getSearchMode(searchMode).recordPurpose,
     stageUpdateSource: workflow.stageUpdateSource || (nextStage === "Saved" ? "process" : ""),
     stageUpdatedAt: workflow.stageUpdatedAt || (nextStage === "Saved" ? now : ""),
     lastUpdatedAt: now,
@@ -7293,15 +7575,39 @@ function buildResultsSubtitle() {
     return `${state.filteredCompanies.length} saved prospect${state.filteredCompanies.length === 1 ? "" : "s"} sorted for follow-up and conversion work.`;
   }
 
-  const parts = [
-    filters.keywordLabel || "Any business type",
-    filters.cityLabel || "All cities",
-    filters.state || "All states",
+  return `${state.filteredCompanies.length} matches - ${getSearchSummary(filters)}`;
+}
+
+function getSearchSummary(filters = getActiveFilters()) {
+  const location = [filters.cityLabel, filters.state].filter(Boolean).join(", ") || filters.state || "All locations";
+  const conditions = [
     formatWebsiteCondition(filters.websiteCondition),
     formatMobileAppCondition(filters.mobileAppCondition),
+    formatBookingSystemCondition(filters.bookingSystemCondition),
+    formatOnlinePaymentCondition(filters.onlinePaymentCondition),
+    formatSocialPresenceCondition(filters.socialPresenceCondition),
+  ].filter((item) => item && item !== "Any");
+  const mode = getSearchMode(filters.searchMode).label;
+  const parts = [
+    filters.customKeyword || filters.keywordLabel || "Any business type",
+    location,
+    ...conditions.slice(0, 3),
   ];
 
-  return `${state.filteredCompanies.length} matches - ${parts.join(" - ")}`;
+  if (filters.phoneAvailable) {
+    parts.push(`Phone: ${filters.phoneAvailable === "yes" ? "Yes" : "No"}`);
+  }
+  if (filters.minimumRating > 0) {
+    parts.push(`Rating ${filters.minimumRating}+`);
+  }
+  if (filters.minimumReviewCount > 0) {
+    parts.push(`${filters.minimumReviewCount}+ reviews`);
+  }
+  if (filters.searchMode && filters.searchMode !== DEFAULT_SEARCH_MODE) {
+    parts.push(mode);
+  }
+
+  return parts.join(" • ");
 }
 
 function buildWebsiteModel(company) {
@@ -7764,11 +8070,20 @@ function readBooleanish(value) {
 function buildIndustryQuery(industry, keywordLabel) {
   const groupConfig = BUSINESS_TYPE_GROUPS[industry] || BUSINESS_TYPE_GROUPS[DEFAULT_INDUSTRY];
   const businessType = normalizeBusinessTypeForGroup(industry || DEFAULT_INDUSTRY, keywordLabel || DEFAULT_SEARCH_KEYWORD);
-  const typeQuery = groupConfig.types[businessType] || businessType;
+  const preset = groupConfig.types[businessType];
+  const typeQuery = Array.isArray(preset?.searchKeywords)
+    ? preset.searchKeywords.join(" ")
+    : typeof preset === "string"
+      ? preset
+      : businessType;
   return [businessType, typeQuery, groupConfig.query].filter(Boolean).join(" ").trim();
 }
 
 function buildSearchKeyword(filters) {
+  if (filters.customKeyword) {
+    return [filters.customKeyword, filters.keywordLabel, filters.industry].filter(Boolean).join(" ").trim();
+  }
+
   const keyword = filters.keywordLabel || DEFAULT_SEARCH_KEYWORD;
   return buildIndustryQuery(filters.industry, keyword);
 }
@@ -7895,15 +8210,6 @@ function syncPresetChips() {
     const presetGroup = button.getAttribute("data-business-group") || "";
     const presetType = button.getAttribute("data-business-type") || "";
     button.classList.toggle("active", presetGroup === selectedGroup && presetType === selectedType);
-  });
-
-  elements.appViewButtons.forEach((button) => {
-    button.addEventListener("click", () => {
-      state.activeView = button.getAttribute("data-app-view") || "discovery";
-      state.selectedClientId = null;
-      state.currentPage = 1;
-      applyFilters();
-    });
   });
 }
 

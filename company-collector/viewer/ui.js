@@ -1,4 +1,5 @@
 import { getScanStatusMeta, SCAN_STATUS } from "./scanner.js";
+import { DEFAULT_SEARCH_MODE, getModeSpecificResultLabel } from "./searchConfig.js";
 
 const PROSPECT_STAGES = [
   "New Lead",
@@ -81,6 +82,7 @@ export function renderResultsView({
   onToggleSavedCompany,
   onHideCompany,
   mode = "discovery",
+  searchMode = DEFAULT_SEARCH_MODE,
 }) {
   if (!companies.length) {
     container.innerHTML = "";
@@ -88,7 +90,7 @@ export function renderResultsView({
   }
 
   container.className = "results-container list-view";
-  container.innerHTML = renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode);
+  container.innerHTML = renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode, searchMode);
 
   container.querySelectorAll("[data-open-details]").forEach((button) => {
     button.addEventListener("click", () => onOpenDetails(button.getAttribute("data-open-details")));
@@ -452,7 +454,7 @@ export function renderDetailPanel({
   });
 }
 
-function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode) {
+function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode, searchMode) {
   return `
     <div class="prospect-list-shell">
       <div class="prospect-list-head">
@@ -463,14 +465,14 @@ function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanie
       </div>
       <div class="prospect-list">
         ${companies
-          .map((company) => renderCompanyRow(company, scanner.getState(company.id), selectedCompanyId, savedCompanies, mode))
+          .map((company) => renderCompanyRow(company, scanner.getState(company.id), selectedCompanyId, savedCompanies, mode, searchMode))
           .join("")}
       </div>
     </div>
   `;
 }
 
-function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies, mode) {
+function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies, mode, searchMode = DEFAULT_SEARCH_MODE) {
   const bestContact = company.primary_contact || null;
   const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = scanState.failureReason || company.scan_failure_reason || "";
@@ -480,6 +482,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
   const reasonChips = renderReasonChips(company.reasonChips);
   const isSavedMode = mode === "saved";
   const isHidden = Boolean(company.is_hidden || company.archived);
+  const contextLabel = getModeSpecificResultLabel(company.searchMode || searchMode);
 
   return `
     <article class="prospect-row ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
@@ -492,7 +495,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
         ${
           isSavedMode
             ? `<span class="stage-chip">${escapeHtml(getProspectStage(company))}</span><span class="row-subtitle">${escapeHtml(company.quote_status || "Not Started")}</span>`
-            : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")}</span><span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>`
+            : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(contextLabel)}</span><span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>`
         }
         ${isHidden && !isSavedMode ? `<span class="stage-chip">Hidden</span>` : ""}
         ${company.archived && isSavedMode ? `<span class="stage-chip">Archived</span>` : ""}
