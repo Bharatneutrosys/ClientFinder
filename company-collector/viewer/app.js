@@ -161,6 +161,21 @@ const ACCESS_STORAGE_REFERENCES = [
   "Not stored",
   "Other",
 ];
+const SUPPORT_STATUSES = ["Not Started", "Active", "Paused", "Renewal Due", "Cancelled", "Completed", "No Support Plan"];
+const MAINTENANCE_PLANS = ["None", "Basic", "Standard", "Premium", "Custom"];
+const SUPPORT_REQUEST_TYPES = [
+  "Content Update",
+  "Design Change",
+  "Bug Fix",
+  "Hosting / Domain",
+  "Booking / Form Issue",
+  "SEO / Analytics",
+  "Training / How-To",
+  "New Feature",
+  "Other",
+];
+const SUPPORT_PRIORITIES = ["Low", "Normal", "High", "Urgent"];
+const SUPPORT_REQUEST_STATUSES = ["New", "In Progress", "Waiting on Client", "Completed", "Cancelled"];
 const REQUIRED_ACCESS_ITEMS = [
   ["domainAccess", "Domain access"],
   ["hostingAccess", "Hosting access"],
@@ -1831,6 +1846,8 @@ function renderClientDetail() {
         updateClientProject(clientId, payload);
       } else if (selectedTab === "handover") {
         updateClientHandover(clientId, payload);
+      } else if (selectedTab === "support") {
+        updateClientSupport(clientId, payload);
       } else {
         updateClient(clientId, payload);
       }
@@ -2015,6 +2032,27 @@ function renderClientDetail() {
         client.clientId,
         field.getAttribute("data-access-record-id"),
         readAccessRecordRowPayload(row)
+      );
+    });
+  });
+
+  const addSupportRequestButton = elements.detailContent.querySelector("[data-add-support-request]");
+  if (addSupportRequestButton) {
+    addSupportRequestButton.addEventListener("click", () => {
+      addSupportRequest(
+        addSupportRequestButton.getAttribute("data-add-support-request"),
+        readSupportRequestFormPayload(elements.detailContent)
+      );
+    });
+  }
+
+  elements.detailContent.querySelectorAll("[data-support-request-field]").forEach((field) => {
+    field.addEventListener("change", () => {
+      const row = field.closest("[data-support-request-row]");
+      updateSupportRequest(
+        client.clientId,
+        field.getAttribute("data-support-request-id"),
+        readSupportRequestRowPayload(row)
       );
     });
   });
@@ -2369,6 +2407,65 @@ function renderClientTabContent(client, activeTab) {
     `;
   }
 
+  if (activeTab === "support") {
+    const supportPlan = normalizeSupportPlan(client.supportPlan, client);
+    const supportRequests = normalizeSupportRequests(client.supportRequests);
+    const summary = calculateSupportSummary({ ...client, supportPlan, supportRequests });
+    return `
+      <section class="workflow-card">
+        <div class="onboarding-summary">
+          <div>
+            <p class="detail-section-title">Support</p>
+            <strong>${escapeHtml(summary.openRequests)} open request${summary.openRequests === 1 ? "" : "s"} - ${escapeHtml(summary.urgentHighPriority)} high priority</strong>
+            <p class="toolbar-subtle">${escapeHtml(summary.overdueRequests)} overdue - Renewal: ${escapeHtml(summary.renewalStatus)}</p>
+          </div>
+          <span class="stage-chip">${escapeHtml(supportPlan.supportStatus || "Not Started")}</span>
+        </div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Support Plan</p>
+        <div class="workflow-form-grid">
+          <label class="inline-field"><span>Support status</span><select data-client-field="supportStatus">${SUPPORT_STATUSES.map((value) => `<option value="${escapeAttribute(value)}" ${value === supportPlan.supportStatus ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Maintenance plan</span><select data-client-field="maintenancePlan">${MAINTENANCE_PLANS.map((value) => `<option value="${escapeAttribute(value)}" ${value === supportPlan.maintenancePlan ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+          ${renderClientInput("Monthly support amount", "monthlySupportAmount", supportPlan.monthlySupportAmount)}
+          ${renderClientInput("Support start date", "supportStartDate", supportPlan.supportStartDate, "date")}
+          ${renderClientInput("Support end/renewal date", "supportEndDate", supportPlan.supportEndDate, "date")}
+          ${renderClientInput("Renewal reminder date", "renewalReminderDate", supportPlan.renewalReminderDate, "date")}
+        </div>
+        <textarea class="workflow-textarea" rows="3" data-client-field="supportNotes" placeholder="Support notes">${escapeHtml(supportPlan.supportNotes || "")}</textarea>
+        ${
+          supportPlan.supportStatus === "Active" && summary.handoverCompleted && (client.projectStatus || "") !== "Maintenance"
+            ? `<p class="workflow-note">Suggested project status: Maintenance</p>`
+            : ""
+        }
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-save-client="${escapeAttribute(client.clientId)}">Save Support Plan</button></div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Add Support Request</p>
+        <div class="workflow-form-grid">
+          ${renderSupportRequestInput("Title", "title")}
+          <label class="inline-field"><span>Request Type</span><select data-new-support-request-field="requestType">${SUPPORT_REQUEST_TYPES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Priority</span><select data-new-support-request-field="priority">${SUPPORT_PRIORITIES.map((value) => `<option value="${escapeAttribute(value)}" ${value === "Normal" ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+          <label class="inline-field"><span>Status</span><select data-new-support-request-field="status">${SUPPORT_REQUEST_STATUSES.map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("")}</select></label>
+          ${renderSupportRequestInput("Requested Date", "requestedDate", "date")}
+          ${renderSupportRequestInput("Target Date", "targetDate", "date")}
+          ${renderSupportRequestInput("Completed Date", "completedDate", "date")}
+        </div>
+        <textarea class="workflow-textarea" rows="3" data-new-support-request-field="notes" placeholder="Notes"></textarea>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-add-support-request="${escapeAttribute(client.clientId)}">Add Support Request</button></div>
+      </section>
+      <section class="workflow-card">
+        <p class="detail-section-title">Support Requests</p>
+        ${
+          supportRequests.length
+            ? `<div class="document-record-list">${supportRequests.map((request) => renderSupportRequest(request)).join("")}</div>`
+            : `<p class="toolbar-subtle">No support requests added yet.</p>`
+        }
+      </section>
+      ${renderClientActivity(client)}
+    `;
+  }
+
   return `
     <section class="workflow-card">
       <p class="detail-section-title">${escapeHtml(titleCase(activeTab))}</p>
@@ -2675,6 +2772,39 @@ function renderAccessRecord(record) {
   `;
 }
 
+function renderSupportRequestInput(label, field, type = "text") {
+  return `
+    <label class="inline-field">
+      <span>${escapeHtml(label)}</span>
+      <input type="${escapeAttribute(type)}" data-new-support-request-field="${escapeAttribute(field)}" />
+    </label>
+  `;
+}
+
+function renderSupportRequest(request) {
+  const isOverdue = isSupportRequestOverdue(request);
+  return `
+    <div class="document-record ${isOverdue ? "overdue" : ""}" data-support-request-row="${escapeAttribute(request.requestId)}">
+      <div class="document-record-top">
+        <div>
+          <strong>${escapeHtml(request.title || "Untitled support request")}</strong>
+          <p class="toolbar-subtle">${escapeHtml(request.requestType || "Other")} - ${escapeHtml(request.priority || "Normal")}${isOverdue ? " - Overdue" : ""}</p>
+        </div>
+        <span class="stage-chip">${escapeHtml(request.status || "New")}</span>
+      </div>
+      <div class="workflow-form-grid">
+        <label class="inline-field"><span>Request Type</span><select data-support-request-id="${escapeAttribute(request.requestId)}" data-support-request-field="requestType">${SUPPORT_REQUEST_TYPES.map((value) => `<option value="${escapeAttribute(value)}" ${value === request.requestType ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Priority</span><select data-support-request-id="${escapeAttribute(request.requestId)}" data-support-request-field="priority">${SUPPORT_PRIORITIES.map((value) => `<option value="${escapeAttribute(value)}" ${value === request.priority ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Status</span><select data-support-request-id="${escapeAttribute(request.requestId)}" data-support-request-field="status">${SUPPORT_REQUEST_STATUSES.map((value) => `<option value="${escapeAttribute(value)}" ${value === request.status ? "selected" : ""}>${escapeHtml(value)}</option>`).join("")}</select></label>
+        <label class="inline-field"><span>Requested Date</span><input type="date" value="${escapeAttribute(request.requestedDate || "")}" data-support-request-id="${escapeAttribute(request.requestId)}" data-support-request-field="requestedDate" /></label>
+        <label class="inline-field"><span>Target Date</span><input type="date" value="${escapeAttribute(request.targetDate || "")}" data-support-request-id="${escapeAttribute(request.requestId)}" data-support-request-field="targetDate" /></label>
+        <label class="inline-field"><span>Completed Date</span><input type="date" value="${escapeAttribute(request.completedDate || "")}" data-support-request-id="${escapeAttribute(request.requestId)}" data-support-request-field="completedDate" /></label>
+      </div>
+      <textarea class="workflow-textarea" rows="2" data-support-request-id="${escapeAttribute(request.requestId)}" data-support-request-field="notes" placeholder="Notes">${escapeHtml(request.notes || "")}</textarea>
+    </div>
+  `;
+}
+
 function renderClientInput(label, field, value, type = "text") {
   return `
     <label class="inline-field">
@@ -2740,6 +2870,22 @@ function readAccessRecordRowPayload(row) {
   return payload;
 }
 
+function readSupportRequestFormPayload(container) {
+  const payload = {};
+  container.querySelectorAll("[data-new-support-request-field]").forEach((field) => {
+    payload[field.getAttribute("data-new-support-request-field")] = field.value || "";
+  });
+  return payload;
+}
+
+function readSupportRequestRowPayload(row) {
+  const payload = {};
+  row?.querySelectorAll("[data-support-request-field]").forEach((field) => {
+    payload[field.getAttribute("data-support-request-field")] = field.value || "";
+  });
+  return payload;
+}
+
 function readClientFormPayload(container, activeTab) {
   const payload = {};
   container.querySelectorAll("[data-client-field]").forEach((field) => {
@@ -2757,6 +2903,11 @@ function readClientFormPayload(container, activeTab) {
     payload.handoverStatus = HANDOVER_STATUSES.includes(payload.handoverStatus)
       ? payload.handoverStatus
       : "Not Started";
+  }
+
+  if (activeTab === "support") {
+    payload.supportStatus = SUPPORT_STATUSES.includes(payload.supportStatus) ? payload.supportStatus : "Not Started";
+    payload.maintenancePlan = MAINTENANCE_PLANS.includes(payload.maintenancePlan) ? payload.maintenancePlan : "None";
   }
 
   return payload;
@@ -3198,6 +3349,125 @@ function updateClientHandover(clientId, updates = {}) {
   }
 
   updateClient(clientId, nextUpdates);
+}
+
+function updateClientSupport(clientId, updates = {}) {
+  const now = new Date().toISOString();
+  const existing = state.clients.find((client) => client.clientId === clientId);
+  if (!existing) {
+    return;
+  }
+
+  const previousPlan = normalizeSupportPlan(existing.supportPlan, existing);
+  const nextPlan = normalizeSupportPlan({ ...previousPlan, ...updates }, existing);
+  const previousRenewalStatus = getSupportRenewalStatus(previousPlan);
+  const renewalStatus = getSupportRenewalStatus(nextPlan);
+  let activity = existing.activity || [];
+
+  if (previousPlan.supportStatus !== "Active" && nextPlan.supportStatus === "Active") {
+    activity = addClientActivity({ ...existing, activity }, "Support plan started", "Support");
+  } else if (previousPlan.supportStatus !== "Cancelled" && nextPlan.supportStatus === "Cancelled") {
+    activity = addClientActivity({ ...existing, activity }, "Support cancelled", "Support");
+  } else if (
+    previousRenewalStatus !== "Renewal Due" &&
+    previousRenewalStatus !== "Renewal Overdue" &&
+    (nextPlan.supportStatus === "Renewal Due" || renewalStatus === "Renewal Due" || renewalStatus === "Renewal Overdue")
+  ) {
+    activity = addClientActivity({ ...existing, activity }, "Renewal due", "Support");
+  }
+
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    return {
+      ...client,
+      supportPlan: nextPlan,
+      supportStatus: nextPlan.supportStatus,
+      maintenancePlan: nextPlan.maintenancePlan,
+      monthlySupportAmount: nextPlan.monthlySupportAmount,
+      supportStartDate: nextPlan.supportStartDate,
+      supportEndDate: nextPlan.supportEndDate,
+      renewalReminderDate: nextPlan.renewalReminderDate,
+      supportNotes: nextPlan.supportNotes,
+      projectStatus: client.projectStatus || "Client Onboarding",
+      activity,
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  elements.statusMessage.textContent = "Support plan saved.";
+  render();
+}
+
+function addSupportRequest(clientId, payload = {}) {
+  const now = new Date().toISOString();
+  const request = getDefaultSupportRequest(payload);
+  if (!request.title) {
+    elements.statusMessage.textContent = "Enter a support request title before adding.";
+    return;
+  }
+
+  state.clients = state.clients.map((client) =>
+    client.clientId === clientId
+      ? {
+          ...client,
+          supportRequests: [request, ...normalizeSupportRequests(client.supportRequests)],
+          activity: addClientActivity(client, `Support request added: ${request.title}`, "Support"),
+          updatedAt: now,
+        }
+      : client
+  );
+  saveClients();
+  elements.statusMessage.textContent = "Support request added.";
+  renderDetail();
+}
+
+function updateSupportRequest(clientId, requestId, updates = {}) {
+  const now = new Date().toISOString();
+  state.clients = state.clients.map((client) => {
+    if (client.clientId !== clientId) {
+      return client;
+    }
+
+    const requests = normalizeSupportRequests(client.supportRequests);
+    const existingRequest = requests.find((request) => request.requestId === requestId);
+    const nextRequests = requests.map((request) =>
+      request.requestId === requestId
+        ? {
+            ...request,
+            ...updates,
+            requestType: SUPPORT_REQUEST_TYPES.includes(updates.requestType) ? updates.requestType : request.requestType,
+            priority: SUPPORT_PRIORITIES.includes(updates.priority) ? updates.priority : request.priority,
+            status: SUPPORT_REQUEST_STATUSES.includes(updates.status) ? updates.status : request.status,
+            completedDate:
+              updates.status === "Completed" && !updates.completedDate && !request.completedDate
+                ? getTodayDateKey()
+                : updates.completedDate || request.completedDate,
+            updatedAt: now,
+          }
+        : request
+    );
+    const nextRequest = nextRequests.find((request) => request.requestId === requestId);
+    const completedNow =
+      existingRequest &&
+      nextRequest &&
+      existingRequest.status !== "Completed" &&
+      nextRequest.status === "Completed";
+    const activity = completedNow
+      ? addClientActivity(client, `Support request completed: ${nextRequest.title}`, "Support")
+      : client.activity || [];
+
+    return {
+      ...client,
+      supportRequests: nextRequests,
+      activity,
+      updatedAt: now,
+    };
+  });
+  saveClients();
+  renderDetail();
 }
 
 function updateOnboardingItem(clientId, groupKey, itemKey, updates = {}) {
@@ -5276,6 +5546,8 @@ function getClients() {
         paymentRecords: normalizePaymentRecords(client.paymentRecords),
         accessChecklist: normalizeAccessChecklist(client.accessChecklist),
         accessRecords: normalizeAccessRecords(client.accessRecords),
+        supportPlan: normalizeSupportPlan(client.supportPlan, client),
+        supportRequests: normalizeSupportRequests(client.supportRequests),
         activity: Array.isArray(client.activity) ? client.activity : [],
       }))
     : [];
@@ -5324,6 +5596,8 @@ function createClientFromProspect(company) {
     paymentRecords: [],
     accessChecklist: getDefaultAccessChecklist(),
     accessRecords: [],
+    supportPlan: getDefaultSupportPlan(),
+    supportRequests: [],
     handoverStatus: "Not Started",
     handoverLaunchDate: "",
     liveUrl: "",
@@ -5331,7 +5605,11 @@ function createClientFromProspect(company) {
     trainingDate: "",
     supportStartDate: "",
     supportEndDate: "",
-    maintenancePlan: "",
+    renewalReminderDate: "",
+    supportStatus: "Not Started",
+    maintenancePlan: "None",
+    monthlySupportAmount: "",
+    supportNotes: "",
     handoverNotes: "",
     currentBlocker: "",
     nextProjectAction: "",
@@ -5453,6 +5731,111 @@ function addClientActivity(client, message, source = "Project") {
     },
     ...(Array.isArray(client.activity) ? client.activity : []),
   ].slice(0, 50);
+}
+
+function getDefaultSupportPlan(source = {}) {
+  return {
+    supportStatus: SUPPORT_STATUSES.includes(source.supportStatus) ? source.supportStatus : "Not Started",
+    maintenancePlan: MAINTENANCE_PLANS.includes(source.maintenancePlan) ? source.maintenancePlan : "None",
+    monthlySupportAmount: String(source.monthlySupportAmount || "").trim(),
+    supportStartDate: String(source.supportStartDate || "").slice(0, 10),
+    supportEndDate: String(source.supportEndDate || "").slice(0, 10),
+    renewalReminderDate: String(source.renewalReminderDate || "").slice(0, 10),
+    supportNotes: String(source.supportNotes || "").trim(),
+  };
+}
+
+function normalizeSupportPlan(plan = {}, client = {}) {
+  const safePlan = plan && typeof plan === "object" ? plan : {};
+  return getDefaultSupportPlan({
+    ...safePlan,
+    supportStatus: safePlan.supportStatus || client.supportStatus,
+    maintenancePlan: safePlan.maintenancePlan || client.maintenancePlan,
+    monthlySupportAmount: safePlan.monthlySupportAmount || client.monthlySupportAmount,
+    supportStartDate: safePlan.supportStartDate || client.supportStartDate,
+    supportEndDate: safePlan.supportEndDate || client.supportEndDate,
+    renewalReminderDate: safePlan.renewalReminderDate || client.renewalReminderDate,
+    supportNotes: safePlan.supportNotes || client.supportNotes,
+  });
+}
+
+function getDefaultSupportRequest(payload = {}) {
+  const now = new Date().toISOString();
+  return {
+    requestId: payload.requestId || `support-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: String(payload.title || "").trim(),
+    requestType: SUPPORT_REQUEST_TYPES.includes(payload.requestType) ? payload.requestType : "Other",
+    priority: SUPPORT_PRIORITIES.includes(payload.priority) ? payload.priority : "Normal",
+    status: SUPPORT_REQUEST_STATUSES.includes(payload.status) ? payload.status : "New",
+    requestedDate: String(payload.requestedDate || getTodayDateKey()).slice(0, 10),
+    targetDate: String(payload.targetDate || "").slice(0, 10),
+    completedDate: String(payload.completedDate || "").slice(0, 10),
+    notes: String(payload.notes || "").trim(),
+    createdAt: payload.createdAt || now,
+    updatedAt: payload.updatedAt || now,
+  };
+}
+
+function normalizeSupportRequests(requests) {
+  return Array.isArray(requests) ? requests.map((request) => getDefaultSupportRequest(request)) : [];
+}
+
+function isSupportRequestOverdue(request) {
+  const targetDate = String(request?.targetDate || "").slice(0, 10);
+  return Boolean(targetDate && targetDate < getTodayDateKey() && !["Completed", "Cancelled"].includes(request?.status));
+}
+
+function getOverdueSupportRequests(requests = []) {
+  return normalizeSupportRequests(requests).filter((request) => isSupportRequestOverdue(request));
+}
+
+function getSupportRenewalStatus(plan = {}) {
+  const supportPlan = normalizeSupportPlan(plan);
+  const renewalDate = String(supportPlan.supportEndDate || "").slice(0, 10);
+  if (!renewalDate || ["Cancelled", "Completed", "No Support Plan"].includes(supportPlan.supportStatus)) {
+    return "No renewal date";
+  }
+
+  const today = getTodayDateKey();
+  if (renewalDate < today && supportPlan.supportStatus === "Active") {
+    return "Renewal Overdue";
+  }
+
+  const renewalTime = new Date(`${renewalDate}T00:00:00`).getTime();
+  const todayTime = new Date(`${today}T00:00:00`).getTime();
+  const daysUntilRenewal = Math.round((renewalTime - todayTime) / (1000 * 60 * 60 * 24));
+  if (daysUntilRenewal >= 0 && daysUntilRenewal <= 14) {
+    return "Renewal Due";
+  }
+
+  return "Current";
+}
+
+function calculateSupportSummary(client) {
+  const supportPlan = normalizeSupportPlan(client?.supportPlan, client);
+  const supportRequests = normalizeSupportRequests(client?.supportRequests);
+  const openRequests = supportRequests.filter((request) => !["Completed", "Cancelled"].includes(request.status)).length;
+  const urgentHighPriority = supportRequests.filter(
+    (request) => ["High", "Urgent"].includes(request.priority) && !["Completed", "Cancelled"].includes(request.status)
+  ).length;
+  const overdueRequests = getOverdueSupportRequests(supportRequests).length;
+  return {
+    openRequests,
+    urgentHighPriority,
+    overdueRequests,
+    renewalStatus: getSupportRenewalStatus(supportPlan),
+    handoverCompleted: isHandoverCompleted(client),
+  };
+}
+
+function isHandoverCompleted(client = {}) {
+  if ((client.handoverStatus || "") === "Completed") {
+    return true;
+  }
+
+  return normalizeHandoverChecklist(client.handoverChecklist)
+    .groups.flatMap((group) => group.items)
+    .some((item) => item.key === "handoverCompleted" && item.checked);
 }
 
 function getDefaultDocumentChecklist() {
