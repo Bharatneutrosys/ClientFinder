@@ -84,6 +84,47 @@ For the static viewer, runtime config can be provided later through `window.CLIE
 
 Next planned task: wire real Supabase reads/writes behind this feature flag while preserving localStorage fallback.
 
+## Saved Prospects Supabase Mode
+
+Saved prospects can be tested through Supabase without migrating clients or other app data.
+
+Required runtime config:
+
+```text
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+CLIENT_FINDER_STORAGE_MODE=supabase
+CLIENT_FINDER_DEFAULT_ORG_ID=00000000-0000-4000-8000-000000000001
+```
+
+`CLIENT_FINDER_DEFAULT_ORG_ID` can use the demo organization from `seed.sql` during development, or a real organization id created in Supabase later. `CLIENT_FINDER_DEFAULT_USER_ID` is optional while auth is not implemented; if omitted, saved rows use `null` for user-owned fields.
+
+When `CLIENT_FINDER_STORAGE_MODE=supabase`:
+
+- Saved prospects are read from `saved_prospects` with joined `prospects`.
+- New saved prospects upsert into `prospects` and `saved_prospects`.
+- Saved prospect workflow updates, archive state, and removal attempt Supabase writes.
+- Browser localStorage is still written first and remains the fallback.
+- If Supabase fails, the app stays usable with localStorage and shows only a subtle status message.
+
+Manual sync:
+
+- The sidebar storage area shows `Sync Saved to Supabase` only when Supabase is configured and storage mode is `supabase`.
+- Clicking it explicitly upserts current local saved prospects into Supabase.
+- The app never auto-pushes all local saved prospects silently.
+
+Rollback:
+
+- Set `CLIENT_FINDER_STORAGE_MODE=localStorage` or remove the flag.
+- Existing localStorage data remains available.
+- Supabase rows are not deleted by rollback.
+
+Auth warning:
+
+- Authentication is not implemented yet.
+- RLS is still future work and must be enabled before multi-user production use.
+- Do not expose the service role key in frontend code.
+
 ## Security Notes
 
 - Do not store raw passwords.

@@ -88,8 +88,7 @@ create table if not exists prospects (
 );
 
 create unique index if not exists prospects_org_dedupe_key_idx
-  on prospects (organization_id, dedupe_key)
-  where dedupe_key is not null;
+  on prospects (organization_id, dedupe_key);
 
 create table if not exists saved_prospects (
   id uuid primary key default gen_random_uuid(),

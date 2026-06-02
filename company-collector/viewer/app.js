@@ -544,6 +544,7 @@ const elements = {
   closeDetailButton: document.querySelector("#close-detail-button"),
   savedSearches: document.querySelector("#saved-searches"),
   storageStatus: document.querySelector("#storage-status"),
+  syncSavedProspectsButton: document.querySelector("#sync-saved-prospects-button"),
   savedSearchCount: document.querySelector("#saved-search-count"),
   industryNav: [...document.querySelectorAll("[data-industry-nav]")],
   presetButtons: [...document.querySelectorAll("[data-search-preset]")],
@@ -561,6 +562,7 @@ async function initialize() {
   populateSavedWorkqueueFilters();
   populateStates();
   await loadTargetCities();
+  await hydrateSavedProspectsFromStorage();
   renderSavedSearches();
   await refreshCompanies();
   restoreQueueState();
@@ -630,6 +632,7 @@ function bindEvents() {
   elements.exportLinkedInButton.addEventListener("click", () =>
     downloadFile("/api/exports/linkedin-decision-makers.csv")
   );
+  elements.syncSavedProspectsButton?.addEventListener("click", syncLocalSavedProspectsToSupabase);
   elements.prevPageButton.addEventListener("click", () => changePage(-1));
   elements.nextPageButton.addEventListener("click", () => changePage(1));
   elements.closeDetailButton.addEventListener("click", closeDetails);
@@ -1291,9 +1294,66 @@ function renderStorageStatus() {
 
   const status = storageService.getStatus();
   const modeLabel = status.activeMode === "localStorage" ? "LocalStorage" : titleCase(status.activeMode);
-  elements.storageStatus.textContent = `Storage Mode: ${modeLabel} - Supabase: ${
-    status.supabaseConfigured ? "Configured" : "Not Configured"
-  }`;
+  elements.storageStatus.textContent = `Active storage: ${modeLabel} - Supabase configured: ${
+    status.supabaseConfigured ? "Yes" : "No"
+  } - Saved prospects source: ${status.activeMode === "supabase" ? "Supabase" : "LocalStorage"}`;
+  elements.syncSavedProspectsButton?.classList.toggle(
+    "hidden",
+    !(status.supabaseConfigured && status.activeMode === "supabase")
+  );
+}
+
+async function hydrateSavedProspectsFromStorage() {
+  const status = storageService.getStatus();
+  if (status.activeMode !== "supabase") {
+    return;
+  }
+
+  try {
+    const savedProspects = await storageService.getSavedProspects();
+    if (!Array.isArray(savedProspects) || !savedProspects.length || typeof savedProspects[0] === "string") {
+      return;
+    }
+
+    const nextManualProspects = [...state.manualProspects];
+    savedProspects.forEach((entry) => {
+      if (!entry?.id) {
+        return;
+      }
+
+      state.savedCompanies = [...new Set([...state.savedCompanies, entry.id])];
+      state.prospectWorkflows[entry.id] = {
+        ...(state.prospectWorkflows[entry.id] || {}),
+        ...(entry.workflow || {}),
+      };
+
+      if (entry.company && !nextManualProspects.some((prospect) => isDuplicateProspect(prospect, entry.company))) {
+        nextManualProspects.push(entry.company);
+      }
+    });
+    state.manualProspects = nextManualProspects;
+  } catch (error) {
+    elements.statusMessage.textContent = "Supabase saved prospects unavailable. Using localStorage fallback.";
+  }
+}
+
+async function syncLocalSavedProspectsToSupabase() {
+  const status = storageService.getStatus();
+  if (!status.supabaseConfigured || status.activeMode !== "supabase") {
+    elements.statusMessage.textContent = "Supabase sync is not available in the current storage mode.";
+    return;
+  }
+
+  elements.syncSavedProspectsButton.disabled = true;
+  elements.statusMessage.textContent = "Syncing local saved prospects to Supabase...";
+  try {
+    const result = await storageService.syncLocalSavedProspectsToSupabase(state.companies);
+    elements.statusMessage.textContent = `Supabase sync complete. ${result.synced} synced, ${result.failed} failed.`;
+  } catch (error) {
+    elements.statusMessage.textContent = "Supabase sync failed. LocalStorage data was not changed.";
+  } finally {
+    elements.syncSavedProspectsButton.disabled = false;
+  }
 }
 
 function renderClientsView() {
@@ -2933,7 +2993,7 @@ function handleDetailTabChange(tab) {
   renderDetail();
 }
 
-function toggleSavedCompany(companyId) {
+async function toggleSavedCompany(companyId) {
   if (!companyId) {
     return;
   }
@@ -2946,11 +3006,13 @@ function toggleSavedCompany(companyId) {
     if (existingSavedId !== companyId) {
       state.savedCompanies = state.savedCompanies.filter((id) => id !== companyId);
     }
+    await persistSavedProspectRemoval(company || { id: existingSavedId });
     elements.statusMessage.textContent = "Prospect removed from saved.";
   } else {
     state.savedCompanies = [...state.savedCompanies, companyId];
     ensureProspectWorkflow(companyId, company);
     recordProspectActivity(companyId, "Saved to prospects", "User", "save");
+    await persistSavedProspectRecord(companyId);
     elements.statusMessage.textContent = "Prospect saved.";
   }
 
@@ -2993,12 +3055,14 @@ function hideCompany(companyId) {
     if (!isArchived) {
       state.hiddenProspects = [...new Set([...state.hiddenProspects, hiddenKey, `id:${normalizeText(company.id)}`])];
       persistHiddenProspects();
+      persistSavedProspectArchiveState(company, true);
       elements.statusMessage.textContent = "Prospect archived.";
     } else {
       state.hiddenProspects = state.hiddenProspects.filter(
         (entry) => !normalizedHiddenKeys.has(normalizeText(entry)) && normalizeText(entry) !== normalizeText(company.id)
       );
       persistHiddenProspects();
+      persistSavedProspectArchiveState(company, false);
       elements.statusMessage.textContent = "Prospect restored from archive.";
     }
     applyProspectWorkflow(company);
@@ -6657,6 +6721,54 @@ function getProspectWorkflow(companyId) {
   return state.prospectWorkflows[companyId] || {};
 }
 
+function isSupabaseSavedProspectsActive() {
+  const status = storageService.getStatus();
+  return status.activeMode === "supabase" && status.supabaseConfigured;
+}
+
+function getCompanyForSavedProspect(companyId) {
+  return (
+    state.companies.find((item) => item.id === companyId) ||
+    state.manualProspects.find((item) => item.id === companyId) ||
+    { id: companyId }
+  );
+}
+
+async function persistSavedProspectRecord(companyId) {
+  if (!isSupabaseSavedProspectsActive() || !companyId || !state.savedCompanies.includes(companyId)) {
+    return;
+  }
+
+  try {
+    await storageService.saveProspect(getCompanyForSavedProspect(companyId), getProspectWorkflow(companyId));
+  } catch (error) {
+    elements.statusMessage.textContent = "Saved locally. Supabase saved prospect sync failed.";
+  }
+}
+
+async function persistSavedProspectRemoval(company) {
+  if (!isSupabaseSavedProspectsActive()) {
+    return;
+  }
+
+  try {
+    await storageService.removeSavedProspect(company);
+  } catch (error) {
+    elements.statusMessage.textContent = "Removed locally. Supabase saved prospect removal failed.";
+  }
+}
+
+function persistSavedProspectArchiveState(company, archived) {
+  if (!isSupabaseSavedProspectsActive()) {
+    return;
+  }
+
+  const action = archived ? storageService.archiveSavedProspect : storageService.unarchiveSavedProspect;
+  action.call(storageService, company).catch(() => {
+    elements.statusMessage.textContent = "Archive updated locally. Supabase saved prospect update failed.";
+  });
+}
+
 function normalizeProspectStage(stage) {
   const normalized = String(stage || "New Lead").trim();
   if (normalized === "Meeting Scheduled") {
@@ -7832,6 +7944,16 @@ function loadProspectWorkflows() {
 
 function persistProspectWorkflows() {
   writeLocalJson(PROSPECT_WORKFLOWS_KEY, state.prospectWorkflows);
+  if (isSupabaseSavedProspectsActive()) {
+    state.savedCompanies.forEach((companyId) => {
+      storageService
+        .updateSavedProspect(companyId, {
+          prospect: getCompanyForSavedProspect(companyId),
+          workflow: getProspectWorkflow(companyId),
+        })
+        .catch(() => {});
+    });
+  }
 }
 
 function loadManualProspects() {
