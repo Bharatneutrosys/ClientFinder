@@ -459,6 +459,7 @@ const state = {
 };
 
 const scanner = createScanner();
+let clientSyncSnapshot = new Map();
 
 const elements = {
   globalSearch: document.querySelector("#global-search"),
@@ -545,6 +546,7 @@ const elements = {
   savedSearches: document.querySelector("#saved-searches"),
   storageStatus: document.querySelector("#storage-status"),
   syncSavedProspectsButton: document.querySelector("#sync-saved-prospects-button"),
+  syncClientsButton: document.querySelector("#sync-clients-button"),
   savedSearchCount: document.querySelector("#saved-search-count"),
   industryNav: [...document.querySelectorAll("[data-industry-nav]")],
   presetButtons: [...document.querySelectorAll("[data-search-preset]")],
@@ -563,6 +565,8 @@ async function initialize() {
   populateStates();
   await loadTargetCities();
   await hydrateSavedProspectsFromStorage();
+  await hydrateClientsFromStorage();
+  resetClientSyncSnapshot();
   renderSavedSearches();
   await refreshCompanies();
   restoreQueueState();
@@ -633,6 +637,7 @@ function bindEvents() {
     downloadFile("/api/exports/linkedin-decision-makers.csv")
   );
   elements.syncSavedProspectsButton?.addEventListener("click", syncLocalSavedProspectsToSupabase);
+  elements.syncClientsButton?.addEventListener("click", syncLocalClientsToSupabase);
   elements.prevPageButton.addEventListener("click", () => changePage(-1));
   elements.nextPageButton.addEventListener("click", () => changePage(1));
   elements.closeDetailButton.addEventListener("click", closeDetails);
@@ -1296,11 +1301,14 @@ function renderStorageStatus() {
   const modeLabel = status.activeMode === "localStorage" ? "LocalStorage" : titleCase(status.activeMode);
   elements.storageStatus.textContent = `Active storage: ${modeLabel} - Supabase configured: ${
     status.supabaseConfigured ? "Yes" : "No"
-  } - Saved prospects source: ${status.activeMode === "supabase" ? "Supabase" : "LocalStorage"}`;
+  } - Saved prospects source: ${status.activeMode === "supabase" ? "Supabase" : "LocalStorage"} - Clients source: ${
+    status.activeMode === "supabase" ? "Supabase" : "LocalStorage"
+  }`;
   elements.syncSavedProspectsButton?.classList.toggle(
     "hidden",
     !(status.supabaseConfigured && status.activeMode === "supabase")
   );
+  elements.syncClientsButton?.classList.toggle("hidden", !(status.supabaseConfigured && status.activeMode === "supabase"));
 }
 
 async function hydrateSavedProspectsFromStorage() {
@@ -1353,6 +1361,42 @@ async function syncLocalSavedProspectsToSupabase() {
     elements.statusMessage.textContent = "Supabase sync failed. LocalStorage data was not changed.";
   } finally {
     elements.syncSavedProspectsButton.disabled = false;
+  }
+}
+
+async function hydrateClientsFromStorage() {
+  const status = storageService.getStatus();
+  if (status.activeMode !== "supabase") {
+    return;
+  }
+
+  try {
+    const clients = await storageService.getClients();
+    if (Array.isArray(clients)) {
+      state.clients = clients.map((client) => normalizeClientRecord(client));
+    }
+  } catch (error) {
+    elements.statusMessage.textContent = "Supabase clients unavailable. Using localStorage fallback.";
+  }
+}
+
+async function syncLocalClientsToSupabase() {
+  const status = storageService.getStatus();
+  if (!status.supabaseConfigured || status.activeMode !== "supabase") {
+    elements.statusMessage.textContent = "Client Supabase sync is not available in the current storage mode.";
+    return;
+  }
+
+  elements.syncClientsButton.disabled = true;
+  elements.statusMessage.textContent = "Syncing local clients to Supabase...";
+  try {
+    const result = await storageService.syncLocalClientsToSupabase();
+    resetClientSyncSnapshot();
+    elements.statusMessage.textContent = `Client sync complete. ${result.synced} synced, ${result.failed} failed.`;
+  } catch (error) {
+    elements.statusMessage.textContent = "Client sync failed. LocalStorage data was not changed.";
+  } finally {
+    elements.syncClientsButton.disabled = false;
   }
 }
 
@@ -5613,27 +5657,63 @@ function applyProspectWorkflow(company) {
 
 function getClients() {
   const parsed = readLocalJson(CLIENTS_KEY, []);
-  return Array.isArray(parsed)
-    ? parsed.map((client) => ({
-        ...client,
-        onboardingChecklist: normalizeOnboardingChecklist(client.onboardingChecklist),
-        projectTracker: normalizeProjectTracker(client.projectTracker),
-        handoverChecklist: normalizeHandoverChecklist(client.handoverChecklist),
-        documentChecklist: normalizeDocumentChecklist(client.documentChecklist),
-        documents: normalizeClientDocuments(client.documents),
-        paymentSummary: normalizePaymentSummary(client.paymentSummary, client),
-        paymentRecords: normalizePaymentRecords(client.paymentRecords),
-        accessChecklist: normalizeAccessChecklist(client.accessChecklist),
-        accessRecords: normalizeAccessRecords(client.accessRecords),
-        supportPlan: normalizeSupportPlan(client.supportPlan, client),
-        supportRequests: normalizeSupportRequests(client.supportRequests),
-        activity: Array.isArray(client.activity) ? client.activity : [],
-      }))
-    : [];
+  return Array.isArray(parsed) ? parsed.map((client) => normalizeClientRecord(client)) : [];
+}
+
+function normalizeClientRecord(client = {}) {
+  return {
+    ...client,
+    onboardingChecklist: normalizeOnboardingChecklist(client.onboardingChecklist),
+    projectTracker: normalizeProjectTracker(client.projectTracker),
+    handoverChecklist: normalizeHandoverChecklist(client.handoverChecklist),
+    documentChecklist: normalizeDocumentChecklist(client.documentChecklist),
+    documents: normalizeClientDocuments(client.documents),
+    paymentSummary: normalizePaymentSummary(client.paymentSummary, client),
+    paymentRecords: normalizePaymentRecords(client.paymentRecords),
+    accessChecklist: normalizeAccessChecklist(client.accessChecklist),
+    accessRecords: normalizeAccessRecords(client.accessRecords),
+    supportPlan: normalizeSupportPlan(client.supportPlan, client),
+    supportRequests: normalizeSupportRequests(client.supportRequests),
+    activity: Array.isArray(client.activity) ? client.activity : [],
+  };
 }
 
 function saveClients() {
   writeLocalJson(CLIENTS_KEY, state.clients);
+  persistChangedClientsToSupabase();
+}
+
+function resetClientSyncSnapshot() {
+  clientSyncSnapshot = new Map(
+    state.clients.map((client) => [client.clientId, JSON.stringify({ updatedAt: client.updatedAt || "", client })])
+  );
+}
+
+function isSupabaseClientsActive() {
+  const status = storageService.getStatus();
+  return status.activeMode === "supabase" && status.supabaseConfigured;
+}
+
+function persistChangedClientsToSupabase() {
+  if (!isSupabaseClientsActive()) {
+    return;
+  }
+
+  state.clients.forEach((client) => {
+    const snapshot = JSON.stringify({ updatedAt: client.updatedAt || "", client });
+    if (clientSyncSnapshot.get(client.clientId) === snapshot) {
+      return;
+    }
+
+    storageService
+      .saveClient(client)
+      .then(() => {
+        clientSyncSnapshot.set(client.clientId, snapshot);
+      })
+      .catch(() => {
+        elements.statusMessage.textContent = "Client saved locally. Supabase client sync failed.";
+      });
+  });
 }
 
 function createClientFromProspect(company) {

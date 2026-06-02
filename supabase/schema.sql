@@ -247,6 +247,8 @@ create table if not exists quotes (
 create table if not exists clients (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references organizations(id) on delete cascade,
+  app_client_id text not null,
+  client_dedupe_key text,
   prospect_id uuid references prospects(id) on delete set null,
   created_by uuid references users(id) on delete set null,
   business_name text not null,
@@ -453,6 +455,8 @@ create index if not exists outreach_templates_org_idx on outreach_templates (org
 create index if not exists quotes_org_status_idx on quotes (organization_id, quote_status);
 
 create index if not exists clients_org_idx on clients (organization_id);
+create unique index if not exists clients_org_app_client_id_idx on clients (organization_id, app_client_id);
+create index if not exists clients_org_dedupe_key_idx on clients (organization_id, client_dedupe_key);
 create index if not exists clients_org_status_idx on clients (organization_id, project_status);
 create index if not exists clients_business_type_idx on clients (business_type);
 create index if not exists clients_city_state_idx on clients (city, state);

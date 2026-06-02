@@ -64,6 +64,28 @@ function getProspectDedupeKey(prospect = {}) {
   return "";
 }
 
+function getClientDedupeKey(client = {}) {
+  const clientId = normalizeText(client.clientId || "");
+  const prospectId = normalizeText(client.prospectId || "");
+  const dedupeKey = normalizeText(client.dedupeKey || "");
+  const businessName = normalizeText(client.businessName || "");
+  const address = normalizeText(client.address || "");
+
+  if (clientId) {
+    return `client:${clientId}`;
+  }
+  if (prospectId) {
+    return `prospect:${prospectId}`;
+  }
+  if (dedupeKey) {
+    return `dedupe:${dedupeKey}`;
+  }
+  if (businessName && address) {
+    return `name-address:${businessName}|${address}`;
+  }
+  return "";
+}
+
 function getLocalProspectById(prospectId) {
   const manualProspects = readLocalJson(STORAGE_KEYS.manualProspects, []);
   return Array.isArray(manualProspects) ? manualProspects.find((item) => item?.id === prospectId) || null : null;
@@ -280,6 +302,165 @@ async function syncLocalSavedProspectsToSupabase(prospectRecords = []) {
   return results;
 }
 
+function buildClientMetadata(client = {}) {
+  return {
+    appClientId: client.clientId || "",
+    prospectId: client.prospectId || "",
+    dedupeKey: client.dedupeKey || getClientDedupeKey(client),
+    clientRecord: client,
+    projectTracker: client.projectTracker || {},
+    onboardingChecklist: client.onboardingChecklist || {},
+    handoverChecklist: client.handoverChecklist || {},
+    documentChecklist: client.documentChecklist || {},
+    documents: Array.isArray(client.documents) ? client.documents : [],
+    paymentSummary: client.paymentSummary || {},
+    paymentRecords: Array.isArray(client.paymentRecords) ? client.paymentRecords : [],
+    accessChecklist: client.accessChecklist || {},
+    accessRecords: Array.isArray(client.accessRecords) ? client.accessRecords : [],
+    supportPlan: client.supportPlan || {},
+    supportRequests: Array.isArray(client.supportRequests) ? client.supportRequests : [],
+    activity: Array.isArray(client.activity) ? client.activity : [],
+    sourceProspectData: client.sourceProspectData || {},
+  };
+}
+
+export function mapClientToSupabaseRow(client = {}) {
+  const config = getSupabaseConfig();
+  const appClientId = client.clientId || `client-${Date.now()}`;
+  return {
+    organization_id: config.defaultOrganizationId,
+    app_client_id: appClientId,
+    client_dedupe_key: getClientDedupeKey({ ...client, clientId: appClientId }) || `client:${normalizeText(appClientId)}`,
+    created_by: config.defaultUserId || null,
+    business_name: client.businessName || "Unknown client",
+    business_type: client.businessType || "",
+    owner_or_manager_name: client.ownerOrManagerName || "",
+    phone: client.phone || "",
+    email: client.email || "",
+    address: client.address || "",
+    city: client.city || "",
+    state: client.state || "",
+    website_url: client.websiteUrl || "",
+    google_profile_url: client.googleProfileUrl || client.mapsUrl || "",
+    current_client_status: client.currentClientStatus || "Active Client",
+    project_status: client.projectStatus || "Client Onboarding",
+    project_type: client.projectType || "",
+    package_type: client.packageType || "",
+    start_date: client.startDate || null,
+    target_launch_date: client.targetLaunchDate || null,
+    actual_launch_date: client.actualLaunchDate || null,
+    handover_status: client.handoverStatus || "Not Started",
+    support_status: client.supportStatus || client.supportPlan?.supportStatus || "Not Started",
+    maintenance_plan: client.maintenancePlan || client.supportPlan?.maintenancePlan || "None",
+    monthly_support_amount: Number(client.monthlySupportAmount || client.supportPlan?.monthlySupportAmount || 0) || null,
+    support_start_date: client.supportStartDate || client.supportPlan?.supportStartDate || null,
+    support_end_date: client.supportEndDate || client.supportPlan?.supportEndDate || null,
+    renewal_reminder_date: client.renewalReminderDate || client.supportPlan?.renewalReminderDate || null,
+    notes: client.notes || "",
+    internal_notes: client.internalNotes || "",
+    source_prospect_data: buildClientMetadata(client),
+  };
+}
+
+export function mapSupabaseRowToClient(row = {}) {
+  const metadata = row.source_prospect_data || {};
+  const clientRecord = metadata.clientRecord || {};
+  return {
+    ...clientRecord,
+    clientId: clientRecord.clientId || row.app_client_id || row.id || "",
+    prospectId: clientRecord.prospectId || metadata.prospectId || "",
+    dedupeKey: clientRecord.dedupeKey || metadata.dedupeKey || row.client_dedupe_key || "",
+    businessName: clientRecord.businessName || row.business_name || "",
+    businessType: clientRecord.businessType || row.business_type || "",
+    ownerOrManagerName: clientRecord.ownerOrManagerName || row.owner_or_manager_name || "",
+    phone: clientRecord.phone || row.phone || "",
+    email: clientRecord.email || row.email || "",
+    address: clientRecord.address || row.address || "",
+    city: clientRecord.city || row.city || "",
+    state: clientRecord.state || row.state || "",
+    websiteUrl: clientRecord.websiteUrl || row.website_url || "",
+    googleProfileUrl: clientRecord.googleProfileUrl || row.google_profile_url || "",
+    currentClientStatus: clientRecord.currentClientStatus || row.current_client_status || "Active Client",
+    projectStatus: clientRecord.projectStatus || row.project_status || "Client Onboarding",
+    projectType: clientRecord.projectType || row.project_type || "",
+    packageType: clientRecord.packageType || row.package_type || "",
+    startDate: clientRecord.startDate || row.start_date || "",
+    targetLaunchDate: clientRecord.targetLaunchDate || row.target_launch_date || "",
+    actualLaunchDate: clientRecord.actualLaunchDate || row.actual_launch_date || "",
+    handoverStatus: clientRecord.handoverStatus || row.handover_status || "Not Started",
+    supportStatus: clientRecord.supportStatus || row.support_status || "Not Started",
+    maintenancePlan: clientRecord.maintenancePlan || row.maintenance_plan || "None",
+    monthlySupportAmount: clientRecord.monthlySupportAmount || row.monthly_support_amount || "",
+    supportStartDate: clientRecord.supportStartDate || row.support_start_date || "",
+    supportEndDate: clientRecord.supportEndDate || row.support_end_date || "",
+    renewalReminderDate: clientRecord.renewalReminderDate || row.renewal_reminder_date || "",
+    notes: clientRecord.notes || row.notes || "",
+    internalNotes: clientRecord.internalNotes || row.internal_notes || "",
+    sourceProspectData: clientRecord.sourceProspectData || metadata.sourceProspectData || {},
+    projectTracker: clientRecord.projectTracker || metadata.projectTracker || {},
+    onboardingChecklist: clientRecord.onboardingChecklist || metadata.onboardingChecklist || {},
+    handoverChecklist: clientRecord.handoverChecklist || metadata.handoverChecklist || {},
+    documentChecklist: clientRecord.documentChecklist || metadata.documentChecklist || {},
+    documents: clientRecord.documents || metadata.documents || [],
+    paymentSummary: clientRecord.paymentSummary || metadata.paymentSummary || {},
+    paymentRecords: clientRecord.paymentRecords || metadata.paymentRecords || [],
+    accessChecklist: clientRecord.accessChecklist || metadata.accessChecklist || {},
+    accessRecords: clientRecord.accessRecords || metadata.accessRecords || [],
+    supportPlan: clientRecord.supportPlan || metadata.supportPlan || {},
+    supportRequests: clientRecord.supportRequests || metadata.supportRequests || [],
+    activity: clientRecord.activity || metadata.activity || [],
+    createdAt: clientRecord.createdAt || row.created_at || "",
+    updatedAt: clientRecord.updatedAt || row.updated_at || "",
+  };
+}
+
+async function getClientsFromSupabase() {
+  const config = getSupabaseConfig();
+  const query = new URLSearchParams({
+    select: "*",
+    organization_id: `eq.${config.defaultOrganizationId}`,
+    order: "updated_at.desc",
+  });
+  const rows = await supabaseRequest(`clients?${query.toString()}`);
+  return Array.isArray(rows) ? rows.map((row) => mapSupabaseRowToClient(row)) : [];
+}
+
+async function saveClientToSupabase(client = {}) {
+  const row = mapClientToSupabaseRow(client);
+  const rows = await supabaseRequest("clients?on_conflict=organization_id,app_client_id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify(row),
+  });
+  return Array.isArray(rows) ? rows[0] : rows;
+}
+
+async function updateClientInSupabase(clientId, updates = {}) {
+  const clients = readLocalJson(STORAGE_KEYS.clients, []);
+  const existing = Array.isArray(clients) ? clients.find((client) => client.clientId === clientId) : null;
+  return saveClientToSupabase({
+    ...(existing || { clientId }),
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+async function syncLocalClientsToSupabase(clientRecords = []) {
+  const clients = clientRecords.length ? clientRecords : readLocalJson(STORAGE_KEYS.clients, []);
+  const results = { total: Array.isArray(clients) ? clients.length : 0, synced: 0, failed: 0 };
+
+  for (const client of Array.isArray(clients) ? clients : []) {
+    try {
+      await saveClientToSupabase(client);
+      results.synced += 1;
+    } catch {
+      results.failed += 1;
+    }
+  }
+
+  return results;
+}
+
 const localStorageStorageService = {
   readJson: readLocalJson,
   writeJson: writeLocalJson,
@@ -287,6 +468,10 @@ const localStorageStorageService = {
   saveProspectToSupabase,
   updateSavedProspectInSupabase,
   syncLocalSavedProspectsToSupabase,
+  getClientsFromSupabase,
+  saveClientToSupabase,
+  updateClientInSupabase,
+  syncLocalClientsToSupabase,
   getSavedProspects() {
     return readLocalJson(STORAGE_KEYS.savedCompanies, []);
   },
@@ -307,10 +492,18 @@ const localStorageStorageService = {
     });
   },
   archiveSavedProspect(prospect) {
-    return setSavedProspectArchiveState(prospect, true);
+    const prospectId = typeof prospect === "object" ? prospect.id : prospect;
+    this.updateSavedProspect(prospectId, {
+      archived: true,
+      archived_at: new Date().toISOString(),
+    });
   },
   unarchiveSavedProspect(prospect) {
-    return setSavedProspectArchiveState(prospect, false);
+    const prospectId = typeof prospect === "object" ? prospect.id : prospect;
+    this.updateSavedProspect(prospectId, {
+      archived: false,
+      archived_at: "",
+    });
   },
   removeSavedProspect(prospect) {
     const savedId = typeof prospect === "object" ? prospect.id : prospect;
@@ -319,6 +512,12 @@ const localStorageStorageService = {
   },
   getClients() {
     return readLocalJson(STORAGE_KEYS.clients, []);
+  },
+  getClientById(clientId) {
+    return this.getClients().find((client) => client.clientId === clientId) || null;
+  },
+  getClientByProspectId(prospectId) {
+    return this.getClients().find((client) => client.prospectId === prospectId) || null;
   },
   saveClient(client) {
     const clients = this.getClients();
@@ -332,6 +531,12 @@ const localStorageStorageService = {
       client.clientId === clientId ? { ...client, ...updates, updatedAt: new Date().toISOString() } : client
     );
     writeLocalJson(STORAGE_KEYS.clients, clients);
+  },
+  createClientFromProspect(client) {
+    this.saveClient(client);
+  },
+  archiveClient(clientId) {
+    this.updateClient(clientId, { currentClientStatus: "Archived", archived: true });
   },
   addActivity(targetType, targetId, activity = {}) {
     if (targetType === "client") {
@@ -458,6 +663,56 @@ const supabaseStorageService = {
     } catch (error) {
       console.warn("Supabase saved prospect removal failed; localStorage fallback retained.", error);
     }
+  },
+  async getClients() {
+    if (!isSupabaseConfigured()) {
+      return localStorageStorageService.getClients();
+    }
+
+    try {
+      return await getClientsFromSupabase();
+    } catch (error) {
+      console.warn("Supabase client read failed; using localStorage fallback.", error);
+      return localStorageStorageService.getClients();
+    }
+  },
+  async getClientById(clientId) {
+    const clients = await this.getClients();
+    return clients.find((client) => client.clientId === clientId) || null;
+  },
+  async getClientByProspectId(prospectId) {
+    const clients = await this.getClients();
+    return clients.find((client) => client.prospectId === prospectId) || null;
+  },
+  async saveClient(client) {
+    localStorageStorageService.saveClient(client);
+    if (!isSupabaseConfigured()) {
+      return;
+    }
+
+    try {
+      await saveClientToSupabase(client);
+    } catch (error) {
+      console.warn("Supabase client write failed; localStorage fallback retained.", error);
+    }
+  },
+  async updateClient(clientId, updates = {}) {
+    localStorageStorageService.updateClient(clientId, updates);
+    if (!isSupabaseConfigured()) {
+      return;
+    }
+
+    try {
+      await updateClientInSupabase(clientId, updates);
+    } catch (error) {
+      console.warn("Supabase client update failed; localStorage fallback retained.", error);
+    }
+  },
+  async createClientFromProspect(client) {
+    await this.saveClient(client);
+  },
+  async archiveClient(clientId) {
+    await this.updateClient(clientId, { currentClientStatus: "Archived", archived: true });
   },
   getStatus() {
     return getStorageStatus();

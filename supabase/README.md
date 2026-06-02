@@ -125,6 +125,53 @@ Auth warning:
 - RLS is still future work and must be enabled before multi-user production use.
 - Do not expose the service role key in frontend code.
 
+## Client Records Supabase Mode
+
+Client records can also be tested through Supabase when storage mode is explicitly enabled.
+
+Required runtime config:
+
+```text
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+CLIENT_FINDER_STORAGE_MODE=supabase
+CLIENT_FINDER_DEFAULT_ORG_ID=00000000-0000-4000-8000-000000000001
+```
+
+Optional while auth is not implemented:
+
+```text
+CLIENT_FINDER_DEFAULT_USER_ID=
+```
+
+When `CLIENT_FINDER_STORAGE_MODE=supabase`:
+
+- Clients are read from the `clients` table.
+- New/edited client records upsert into `clients`.
+- Browser localStorage is still written first and remains the fallback.
+- Full local client migration is not automatic.
+- Client profile data that does not yet have first-class columns is preserved in `source_prospect_data.clientRecord` JSON.
+- Documents, payments, access records, support requests, onboarding, project tasks, handover items, and activity remain embedded in that client JSON until later tasks split them into their own Supabase tables.
+
+Manual client sync:
+
+- The sidebar storage area shows `Sync Clients to Supabase` only when Supabase is configured and storage mode is `supabase`.
+- Clicking it reads current browser localStorage clients and upserts them to Supabase.
+- Duplicates are avoided with `organization_id + app_client_id`.
+- The app never auto-pushes all local clients silently.
+
+Client rollback:
+
+- Set `CLIENT_FINDER_STORAGE_MODE=localStorage` or remove the flag.
+- Existing localStorage clients remain available.
+- Supabase client rows are not deleted by rollback.
+
+Security:
+
+- The frontend uses only the anon key.
+- Do not expose or configure `SUPABASE_SERVICE_ROLE_KEY` in frontend code.
+- Do not store raw passwords in client access records.
+
 ## Security Notes
 
 - Do not store raw passwords.
