@@ -84,32 +84,60 @@ export function renderResultsView({
   mode = "discovery",
   searchMode = DEFAULT_SEARCH_MODE,
 }) {
-  if (!companies.length) {
+  const safeCompanies = Array.isArray(companies) ? companies.filter(Boolean) : [];
+  const safeViewMode = viewMode === "grid" ? "grid" : "list";
+  const safeScanner =
+    scanner && typeof scanner.getState === "function"
+      ? scanner
+      : {
+          getState: () => ({
+            status: SCAN_STATUS.NOT_SCANNED,
+            contacts: [],
+            failureReason: "",
+            lastScanned: "",
+          }),
+        };
+
+  if (!safeCompanies.length) {
     container.innerHTML = "";
     return;
   }
 
-  container.className = "results-container list-view";
-  container.innerHTML = renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode, searchMode);
+  container.className = `results-container ${safeViewMode}-view`;
+  container.innerHTML =
+    safeViewMode === "grid"
+      ? safeCompanies
+          .map((company) =>
+            renderCompanyGridCard(
+              normalizeCompanyForRender(company),
+              getCompanyScanState(safeScanner, company),
+              selectedCompanyId,
+              savedCompanies,
+              mode,
+              searchMode
+            )
+          )
+          .join("")
+      : renderCompanyTable(safeCompanies, safeScanner, selectedCompanyId, savedCompanies, mode, searchMode);
 
   container.querySelectorAll("[data-open-details]").forEach((button) => {
-    button.addEventListener("click", () => onOpenDetails(button.getAttribute("data-open-details")));
+    button.addEventListener("click", () => onOpenDetails?.(button.getAttribute("data-open-details")));
   });
 
   container.querySelectorAll("[data-scan-company]").forEach((button) => {
-    button.addEventListener("click", () => onScanCompany(button.getAttribute("data-scan-company")));
+    button.addEventListener("click", () => onScanCompany?.(button.getAttribute("data-scan-company")));
   });
 
   container.querySelectorAll("[data-retry-scan]").forEach((button) => {
-    button.addEventListener("click", () => onRetryScan(button.getAttribute("data-retry-scan")));
+    button.addEventListener("click", () => onRetryScan?.(button.getAttribute("data-retry-scan")));
   });
 
   container.querySelectorAll("[data-save-company]").forEach((button) => {
-    button.addEventListener("click", () => onToggleSavedCompany(button.getAttribute("data-save-company")));
+    button.addEventListener("click", () => onToggleSavedCompany?.(button.getAttribute("data-save-company")));
   });
 
   container.querySelectorAll("[data-hide-company]").forEach((button) => {
-    button.addEventListener("click", () => onHideCompany(button.getAttribute("data-hide-company")));
+    button.addEventListener("click", () => onHideCompany?.(button.getAttribute("data-hide-company")));
   });
 }
 
@@ -493,6 +521,7 @@ export function renderDetailPanel({
 }
 
 function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode, searchMode) {
+  const safeCompanies = Array.isArray(companies) ? companies.filter(Boolean) : [];
   return `
     <div class="prospect-list-shell">
       <div class="prospect-list-head">
@@ -502,8 +531,17 @@ function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanie
         <span>Actions</span>
       </div>
       <div class="prospect-list">
-        ${companies
-          .map((company) => renderCompanyRow(company, scanner.getState(company.id), selectedCompanyId, savedCompanies, mode, searchMode))
+        ${safeCompanies
+          .map((company) =>
+            renderCompanyRow(
+              normalizeCompanyForRender(company),
+              getCompanyScanState(scanner, company),
+              selectedCompanyId,
+              savedCompanies,
+              mode,
+              searchMode
+            )
+          )
           .join("")}
       </div>
     </div>
@@ -511,39 +549,43 @@ function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanie
 }
 
 function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies, mode, searchMode = DEFAULT_SEARCH_MODE) {
-  const isSaved = isSavedProspect(company, savedCompanies);
+  const safeCompany = normalizeCompanyForRender(company);
+  const safeScanState = normalizeScanState(scanState);
+  const isSaved = isSavedProspect(safeCompany, savedCompanies);
   const isSavedMode = mode === "saved";
-  const location = [company.city, company.state].filter(Boolean).join(", ") || "No location";
-  const businessType = company.keyword || company.businessType || company.industry || "Business";
-  const priority = company.opportunityPriority || company.lead_label || getModeSpecificResultLabel(company.searchMode || searchMode);
-  const websiteStatus = company.websiteStatus || (company.website ? "Has Website" : "No Website");
+  const companyId = safeCompany.id;
+  const location = [safeCompany.city, safeCompany.state].filter(Boolean).join(", ") || safeCompany.address || "Location unavailable";
+  const businessType = safeCompany.keyword || safeCompany.businessType || safeCompany.industry || "Business";
+  const priority = safeCompany.opportunityPriority || safeCompany.lead_label || getModeSpecificResultLabel(safeCompany.searchMode || searchMode);
+  const websiteStatus = safeCompany.websiteStatus || (safeCompany.website ? "Has Website" : "No website");
 
   return `
-    <article class="prospect-row ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
-      <button class="prospect-main" type="button" data-open-details="${escapeAttribute(company.id)}">
-        <span class="row-title">${escapeHtml(company.name || "NA")}</span>
+    <article class="prospect-row ${companyId === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
+      <button class="prospect-main" type="button" data-open-details="${escapeAttribute(companyId)}">
+        <span class="row-title">${escapeHtml(safeCompany.name || "Unnamed business")}</span>
         <span class="row-subtitle">${escapeHtml(businessType)} - ${escapeHtml(location)}</span>
-        <span class="row-subtitle">${escapeHtml(company.phone || "No phone")}</span>
+        <span class="row-subtitle">${escapeHtml(safeCompany.phone || "No phone")}</span>
       </button>
       <div class="prospect-fit">
         ${
           isSavedMode
-            ? `<span class="stage-chip">${escapeHtml(getProspectStage(company))}</span><span class="row-subtitle">${escapeHtml(company.quote_status || "Not Started")}</span>`
+            ? `<span class="stage-chip">${escapeHtml(getProspectStage(safeCompany))}</span><span class="row-subtitle">${escapeHtml(safeCompany.quote_status || "Not Started")}</span>`
             : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(priority))}">${escapeHtml(priority)}</span>`
         }
-        ${company.archived && isSavedMode ? `<span class="stage-chip">Archived</span>` : ""}
+        ${safeCompany.archived && isSavedMode ? `<span class="stage-chip">Archived</span>` : ""}
       </div>
       <div class="prospect-signals">
         ${
           isSavedMode
             ? `
-              <span>Next follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
-              <span>Follow-up status: ${escapeHtml(getFollowUpStatus(company.next_follow_up))}</span>
-              <span>Next action: ${escapeHtml(company.next_action || "NA")}</span>
+              <span>Next follow-up: ${escapeHtml(safeCompany.next_follow_up || "Not scheduled")}</span>
+              <span>Follow-up status: ${escapeHtml(getFollowUpStatus(safeCompany.next_follow_up))}</span>
+              <span>Next action: ${escapeHtml(safeCompany.next_action || "NA")}</span>
             `
             : `
               <span>Website: ${escapeHtml(websiteStatus)}</span>
-              <span>${escapeHtml(formatRating(company))}</span>
+              <span>${escapeHtml(formatRating(safeCompany))}</span>
+              ${safeScanState.failureReason ? `<span class="failure-note">Review: ${escapeHtml(formatFailureReason(safeScanState.failureReason))}</span>` : ""}
             `
         }
       </div>
@@ -551,13 +593,13 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
         ${
           isSavedMode
             ? `
-              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open</button>
-              ${company.phone ? `<a class="secondary-btn call-link" href="tel:${escapeAttribute(company.phone)}">Call</a>` : ""}
-              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">${company.archived ? "Unarchive" : "Archive"}</button>
+              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(companyId)}">Open</button>
+              ${safeCompany.phone ? `<a class="secondary-btn call-link" href="tel:${escapeAttribute(safeCompany.phone)}">Call</a>` : ""}
+              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(companyId)}">${safeCompany.archived ? "Unarchive" : "Archive"}</button>
             `
             : `
-              <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
-              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open Details</button>
+              <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(companyId)}">${isSaved ? "Saved" : "Save"}</button>
+              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(companyId)}">Open Details</button>
             `
         }
       </div>
@@ -606,50 +648,56 @@ function renderListSelector(company, savedLists = []) {
   `;
 }
 
-function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompanies) {
-  const bestContact = company.primary_contact || null;
-  const confidence = Number(company.lead_score || bestContact?.confidence_score || company.confidence_score || 0);
-  const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
-  const failureReason = scanState.failureReason || company.scan_failure_reason || "";
-  const isSaved = isSavedProspect(company, savedCompanies);
-  const isHidden = Boolean(company.is_hidden || company.archived);
+function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompanies, mode = "discovery", searchMode = DEFAULT_SEARCH_MODE) {
+  const safeCompany = normalizeCompanyForRender(company);
+  const safeScanState = normalizeScanState(scanState);
+  const bestContact = safeCompany.primary_contact || null;
+  const confidence = Number(safeCompany.lead_score || bestContact?.confidence_score || safeCompany.confidence_score || 0);
+  const statusMeta = getScanStatusMeta(safeScanState.status || safeCompany.scan_status || SCAN_STATUS.NOT_SCANNED);
+  const failureReason = safeScanState.failureReason || safeCompany.scan_failure_reason || "";
+  const isSaved = isSavedProspect(safeCompany, savedCompanies);
+  const isHidden = Boolean(safeCompany.is_hidden || safeCompany.archived);
+  const companyId = safeCompany.id;
+  const location = [safeCompany.city, safeCompany.state].filter(Boolean).join(", ") || safeCompany.address || "Location unavailable";
+  const businessType = safeCompany.keyword || safeCompany.businessType || safeCompany.industry || "Business";
+  const websiteStatus = safeCompany.websiteStatus || (safeCompany.website ? "Has Website" : "No website");
+  const priority =
+    safeCompany.opportunityPriority ||
+    safeCompany.lead_label ||
+    formatConfidenceBadge(confidence) ||
+    getModeSpecificResultLabel(safeCompany.searchMode || searchMode);
+  const isSavedMode = mode === "saved";
 
   return `
-    <article class="company-grid-card ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
+    <article class="company-grid-card ${companyId === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
       <div class="company-grid-top">
         <div>
-          <h3>${escapeHtml(company.name || "NA")}</h3>
-          <p>${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</p>
+          <h3>${escapeHtml(safeCompany.name || "Unnamed business")}</h3>
+          <p>${escapeHtml(location)}</p>
         </div>
-        <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(company.opportunityPriority || company.lead_label || formatConfidenceBadge(confidence))}</span>
+        <span class="quality-pill ${escapeAttribute(getLeadBadgeClass(priority))}">${escapeHtml(priority)}</span>
       </div>
       <div class="company-grid-meta">
-        <span>${escapeHtml(company.industry || "NA")}</span>
-        <span>Website Status: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
-        <span>Website Quality: ${escapeHtml(company.websiteQualityStatus || "Not Checked")}${
-          Number(company.websiteQualityScore || 0) > 0 ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)` : ""
-        }</span>
-        <span>Mobile App Status: ${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
+        <span>${escapeHtml(businessType)}</span>
+        <span>${escapeHtml(safeCompany.phone || "No phone")}</span>
+        <span>Website: ${escapeHtml(websiteStatus)}</span>
+        <span>${escapeHtml(formatRating(safeCompany))}</span>
         ${isHidden ? `<span>Hidden</span>` : ""}
-        ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>Booking Platform: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
-        ${company.socialPlatform && company.socialPlatform !== "Unknown" ? `<span>Social Platform: ${escapeHtml(company.socialPlatform)}</span>` : ""}
-        <span>Status: ${escapeHtml(getProspectStage(company))}</span>
-        <span>Next Follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
-        <span>${escapeHtml(String(company.contacts_found || 0))} contacts</span>
+        ${isSavedMode ? `<span>Status: ${escapeHtml(getProspectStage(safeCompany))}</span>` : ""}
+        ${isSavedMode ? `<span>Next follow-up: ${escapeHtml(safeCompany.next_follow_up || "Not scheduled")}</span>` : ""}
+        <span>${escapeHtml(String(safeCompany.contacts_found || 0))} contacts</span>
         <span>${escapeHtml(bestContact?.name || "No best contact")}</span>
-        <span>${escapeHtml(String(company.lead_score || 0))}/100 opportunity score</span>
-        <span>${company.outreach_ready ? "Outreach ready" : "Not outreach ready"}</span>
       </div>
       <div class="table-actions">
-        <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
-        <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open Details</button>
-        <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">${isHidden ? "Restore" : "Hide"}</button>
-        <button class="secondary-btn" type="button" data-scan-company="${escapeAttribute(company.id)}">
-          ${scanState.status === SCAN_STATUS.SCANNING ? "Scanning..." : "Deep Scan"}
+        <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(companyId)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
+        <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(companyId)}">Open Details</button>
+        <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(companyId)}">${isHidden ? "Restore" : "Hide"}</button>
+        <button class="secondary-btn" type="button" data-scan-company="${escapeAttribute(companyId)}">
+          ${safeScanState.status === SCAN_STATUS.SCANNING ? "Scanning..." : "Deep Scan"}
         </button>
         ${
           failureReason
-            ? `<button class="secondary-btn" type="button" data-retry-scan="${escapeAttribute(company.id)}">Retry</button>`
+            ? `<button class="secondary-btn" type="button" data-retry-scan="${escapeAttribute(companyId)}">Retry</button>`
             : ""
         }
       </div>
@@ -657,6 +705,43 @@ function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompa
       ${failureReason ? `<span class="row-subtitle failure-note">${escapeHtml(formatFailureReason(failureReason))}</span>` : ""}
     </article>
   `;
+}
+
+function normalizeCompanyForRender(company) {
+  const safeCompany = company && typeof company === "object" ? company : {};
+  const fallbackId =
+    safeCompany.id ||
+    safeCompany.placeId ||
+    safeCompany.place_id ||
+    [safeCompany.name, safeCompany.address, safeCompany.phone].filter(Boolean).join("|") ||
+    `prospect-${Math.random().toString(36).slice(2)}`;
+
+  return {
+    ...safeCompany,
+    id: String(fallbackId),
+    contacts: Array.isArray(safeCompany.contacts) ? safeCompany.contacts : [],
+    reasonChips: Array.isArray(safeCompany.reasonChips) ? safeCompany.reasonChips : [],
+    scoreReasons: Array.isArray(safeCompany.scoreReasons) ? safeCompany.scoreReasons : [],
+  };
+}
+
+function getCompanyScanState(scanner, company) {
+  try {
+    const safeCompany = normalizeCompanyForRender(company);
+    return normalizeScanState(scanner?.getState?.(safeCompany.id));
+  } catch (error) {
+    return normalizeScanState(null);
+  }
+}
+
+function normalizeScanState(scanState) {
+  const safeState = scanState && typeof scanState === "object" ? scanState : {};
+  return {
+    status: safeState.status || SCAN_STATUS.NOT_SCANNED,
+    contacts: Array.isArray(safeState.contacts) ? safeState.contacts : [],
+    failureReason: safeState.failureReason || "",
+    lastScanned: safeState.lastScanned || "",
+  };
 }
 
 function renderTabContent({
@@ -2075,9 +2160,9 @@ function formatFailureReason(value) {
   return labels[value] || (value ? titleCase(value) : "NA");
 }
 
-function formatRating(company) {
-  const rating = Number(company.rating || 0);
-  const reviewCount = Number(company.reviews || company.reviewCount || 0);
+function formatRating(company = {}) {
+  const rating = Number(company?.rating || 0);
+  const reviewCount = Number(company?.reviews || company?.reviewCount || 0);
 
   if (!rating && !reviewCount) {
     return "No rating";

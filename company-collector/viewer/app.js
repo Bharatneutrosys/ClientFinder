@@ -1143,6 +1143,8 @@ function applyFilters() {
 
   state.filteredCompanies = state.companies
     .filter((company) => {
+      const contacts = Array.isArray(company?.contacts) ? company.contacts : [];
+
       if (state.activeView === "discovery" && isProspectHidden(company) && !filters.showHidden) {
         return false;
       }
@@ -1296,7 +1298,7 @@ function applyFilters() {
 
       if (
         filters.contactType &&
-        !company.contacts.some((contact) => contact.contact_type === filters.contactType)
+        !contacts.some((contact) => contact.contact_type === filters.contactType)
       ) {
         return false;
       }
@@ -1319,7 +1321,7 @@ function applyFilters() {
 
       if (
         filters.highConfidence &&
-        !company.contacts.some((contact) => Number(contact.confidence_score || 0) >= 85)
+        !contacts.some((contact) => Number(contact.confidence_score || 0) >= 85)
       ) {
         return false;
       }
@@ -1334,21 +1336,21 @@ function applyFilters() {
 
       if (
         filters.verifiedOnly &&
-        !company.contacts.some((contact) => contact.email_status === "verified")
+        !contacts.some((contact) => contact.email_status === "verified")
       ) {
         return false;
       }
 
       if (
         filters.guessedEmails &&
-        !company.contacts.some((contact) => contact.email_status === "guessed")
+        !contacts.some((contact) => contact.email_status === "guessed")
       ) {
         return false;
       }
 
       if (
         filters.linkedInFound &&
-        !company.contacts.some((contact) => Boolean(contact.linkedin_url))
+        !contacts.some((contact) => Boolean(contact.linkedin_url))
       ) {
         return false;
       }
@@ -1376,7 +1378,7 @@ function render() {
     renderUnsafe();
   } catch (error) {
     console.error(`Client Finder render failed for ${state.activeView}.`, error);
-    showSectionError(`Unable to render ${formatViewLabel(state.activeView)}. Use the navigation to continue, or refresh after checking the console.`);
+    showSectionError(`${formatViewLabel(state.activeView)} could not be displayed right now. Use the navigation to continue.`);
   }
 }
 
@@ -1688,6 +1690,23 @@ function renderDashboardView() {
 
   elements.resultsContainer.className = "results-container list-view";
   elements.resultsContainer.innerHTML = `
+    <section class="dashboard-hero">
+      <div class="dashboard-hero-content">
+        <p class="dashboard-kicker">Client Finder Command Center</p>
+        <h1>Business prospecting that stays focused.</h1>
+        <p>Track the prospects, follow-ups, and client work that need attention today.</p>
+        <div class="dashboard-hero-actions">
+          <button class="primary-btn" type="button" data-dashboard-view="discovery">Go to Search</button>
+          <button class="secondary-btn" type="button" data-dashboard-view="pipeline">Review Pipeline</button>
+        </div>
+      </div>
+      <div class="dashboard-hero-metrics">
+        <span><strong>${escapeHtml(String(metrics.totalSavedProspects))}</strong> saved prospects</span>
+        <span><strong>${escapeHtml(String(metrics.followUpsDueToday))}</strong> due today</span>
+        <span><strong>${escapeHtml(String(metrics.activeClients))}</strong> active clients</span>
+      </div>
+    </section>
+
     ${
       hasWorkspaceData
         ? ""
@@ -1706,16 +1725,17 @@ function renderDashboardView() {
 
     <section class="dashboard-metric-grid">
       ${[
-        ["Follow-Ups Due Today", metrics.followUpsDueToday],
-        ["Pipeline Prospects", metrics.totalSavedProspects],
-        ["Active Clients", metrics.activeClients],
-        ["Blocked Clients", metrics.blockedClients],
+        ["Follow-Ups Due Today", metrics.followUpsDueToday, "Needs attention now"],
+        ["Pipeline Prospects", metrics.totalSavedProspects, "Saved opportunities"],
+        ["Active Clients", metrics.activeClients, "Current projects"],
+        ["Blocked Clients", metrics.blockedClients, "Requires unblock"],
       ]
         .map(
-          ([label, value]) => `
-            <div class="overview-card">
+          ([label, value, helper]) => `
+            <div class="overview-card dashboard-stat-card">
               <span class="overview-label">${escapeHtml(label)}</span>
               <strong>${escapeHtml(String(value))}</strong>
+              <small>${escapeHtml(helper)}</small>
             </div>
           `
         )
@@ -7283,10 +7303,12 @@ function normalizeReasonChips(value) {
 }
 
 function augmentCompaniesWithScannerData(companies) {
-  return companies.map((company) => {
+  return (Array.isArray(companies) ? companies : []).filter(Boolean).map((company) => {
     const scanState = scanner.getState(company.id);
+    const scannerContacts = Array.isArray(scanState.contacts) ? scanState.contacts : [];
+    const existingContacts = Array.isArray(company.contacts) ? company.contacts : [];
     const mergedContacts =
-      scanState.contacts.length > (company.contacts || []).length ? scanState.contacts : company.contacts || [];
+      scannerContacts.length > existingContacts.length ? scannerContacts : existingContacts;
     const primaryContact = company.primary_contact || mergedContacts[0] || null;
     const websiteModel = buildWebsiteModel(company);
     const websiteQualityModel = buildWebsiteQualityModel(company);
@@ -9555,7 +9577,7 @@ function deriveBookingPlatform(company) {
     company.bookingUrl,
     company.profile_url,
     company.profileUrl,
-    ...(company.contacts || []).map((contact) => contact.source_url),
+    ...(Array.isArray(company.contacts) ? company.contacts : []).map((contact) => contact.source_url),
   ]
     .filter(Boolean)
     .join(" ")
@@ -9825,7 +9847,9 @@ function syncPresetChips() {
 }
 
 function flattenContacts(companies) {
-  return companies.flatMap((company) => company.contacts || []);
+  return (Array.isArray(companies) ? companies : []).flatMap((company) =>
+    Array.isArray(company?.contacts) ? company.contacts : []
+  );
 }
 
 function setLoading(isLoading) {
