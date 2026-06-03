@@ -117,6 +117,7 @@ export function renderDetailPanel({
   company,
   activeTab,
   savedCompanies,
+  savedLists = [],
   container,
   onChangeTab,
   onScanCompany,
@@ -128,6 +129,8 @@ export function renderDetailPanel({
   onSetNextFollowUp,
   onToggleMilestone,
   onCheckWebsiteQuality,
+  onEnrichContactInfo,
+  onSaveContactFields,
   onCopyOutreachTemplate,
   onMarkOutreachMilestone,
   senderProfile,
@@ -142,6 +145,8 @@ export function renderDetailPanel({
   onMarkBadContact,
   onCopyContactEmail,
   onCopyContactPhone,
+  onAddProspectToList,
+  onRemoveProspectFromList,
   onConvertToClient,
   onOpenClientProfile,
 }) {
@@ -205,6 +210,7 @@ export function renderDetailPanel({
           : ""
       }
       <button class="secondary-btn" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
+      ${renderListSelector(company, savedLists)}
       ${
         existingClientId
           ? `<button class="primary-btn" type="button" data-open-client-profile="${escapeAttribute(existingClientId)}">Open Client Profile</button>`
@@ -268,6 +274,21 @@ export function renderDetailPanel({
   if (qualityButton) {
     qualityButton.addEventListener("click", () =>
       onCheckWebsiteQuality(qualityButton.getAttribute("data-check-website-quality"))
+    );
+  }
+
+  const enrichButton = container.querySelector("[data-enrich-contact]");
+  if (enrichButton) {
+    enrichButton.addEventListener("click", () => onEnrichContactInfo?.(enrichButton.getAttribute("data-enrich-contact")));
+  }
+
+  const saveContactFieldsButton = container.querySelector("[data-save-contact-fields]");
+  if (saveContactFieldsButton) {
+    saveContactFieldsButton.addEventListener("click", () =>
+      onSaveContactFields?.(
+        saveContactFieldsButton.getAttribute("data-save-contact-fields"),
+        readContactFieldsPayload(container)
+      )
     );
   }
 
@@ -452,6 +473,23 @@ export function renderDetailPanel({
     onCopyContactEmail,
     onCopyContactPhone,
   });
+
+  const addToListButton = container.querySelector("[data-add-to-list]");
+  if (addToListButton) {
+    addToListButton.addEventListener("click", () => {
+      const select = container.querySelector("[data-list-select]");
+      onAddProspectToList?.(addToListButton.getAttribute("data-add-to-list"), select?.value || "");
+    });
+  }
+
+  container.querySelectorAll("[data-remove-detail-list]").forEach((button) => {
+    button.addEventListener("click", () =>
+      onRemoveProspectFromList?.(
+        button.getAttribute("data-remove-detail-list") || "",
+        button.getAttribute("data-list-id") || ""
+      )
+    );
+  });
 }
 
 function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanies, mode, searchMode) {
@@ -561,6 +599,32 @@ function renderReasonChips(reasonChips) {
   `;
 }
 
+function renderListSelector(company, savedLists = []) {
+  if (!Array.isArray(savedLists) || !savedLists.length) {
+    return `<span class="toolbar-subtle">Create lists from Saved Lists.</span>`;
+  }
+
+  const memberships = savedLists.filter((list) => (list.prospectIds || []).includes(company.id));
+  return `
+    <label class="inline-field inline-select">
+      <select data-list-select aria-label="Saved list">
+        ${savedLists.map((list) => `<option value="${escapeAttribute(list.listId)}">${escapeHtml(list.listName)}</option>`).join("")}
+      </select>
+    </label>
+    <button class="secondary-btn" type="button" data-add-to-list="${escapeAttribute(company.id)}">Add to List</button>
+    ${
+      memberships.length
+        ? memberships
+            .map(
+              (list) =>
+                `<button class="secondary-btn" type="button" data-remove-detail-list="${escapeAttribute(company.id)}" data-list-id="${escapeAttribute(list.listId)}">Remove ${escapeHtml(list.listName)}</button>`
+            )
+            .join("")
+        : ""
+    }
+  `;
+}
+
 function renderCompanyGridCard(company, scanState, selectedCompanyId, savedCompanies) {
   const bestContact = company.primary_contact || null;
   const confidence = Number(company.lead_score || bestContact?.confidence_score || company.confidence_score || 0);
@@ -636,14 +700,43 @@ function renderTabContent({
 }) {
   if (activeTab === "contact") {
     return `
+      <section class="workflow-card">
+        <div class="workflow-header-row">
+          <div>
+            <p class="detail-section-title">Contact Enrichment</p>
+            <p class="toolbar-subtle">Status: ${escapeHtml(company.enrichmentStatus || "Not Checked")}${company.enrichmentCheckedAt ? ` - ${escapeHtml(formatDate(company.enrichmentCheckedAt))}` : ""}</p>
+          </div>
+          <div class="workflow-actions">
+            <button class="secondary-btn" type="button" data-enrich-contact="${escapeAttribute(company.id)}">Enrich Contact Info</button>
+          </div>
+        </div>
+        <div class="quote-form-grid">
+          <label class="inline-field"><span>Email</span><input type="email" value="${escapeAttribute(company.primaryEmail || company.primary_contact?.email || "")}" data-contact-field="primaryEmail" /></label>
+          <label class="inline-field"><span>Contact Person</span><input type="text" value="${escapeAttribute(company.contactPersonName || company.primary_contact?.name || "")}" data-contact-field="contactPersonName" /></label>
+          <label class="inline-field"><span>Title</span><input type="text" value="${escapeAttribute(company.contactPersonTitle || company.primary_contact?.title || "")}" data-contact-field="contactPersonTitle" /></label>
+          <label class="inline-field"><span>Facebook</span><input type="url" value="${escapeAttribute(company.facebookUrl || company.facebook_url || "")}" data-contact-field="facebookUrl" /></label>
+          <label class="inline-field"><span>Instagram</span><input type="url" value="${escapeAttribute(company.instagramUrl || company.instagram_url || "")}" data-contact-field="instagramUrl" /></label>
+          <label class="inline-field"><span>LinkedIn</span><input type="url" value="${escapeAttribute(company.linkedinUrl || company.linkedin_url || company.primary_contact?.linkedin_url || "")}" data-contact-field="linkedinUrl" /></label>
+          <label class="inline-field"><span>Booking Link</span><input type="url" value="${escapeAttribute(company.bookingUrl || company.booking_url || "")}" data-contact-field="bookingUrl" /></label>
+          <label class="inline-field"><span>Contact Page</span><input type="url" value="${escapeAttribute(company.websiteContactPageUrl || "")}" data-contact-field="websiteContactPageUrl" /></label>
+        </div>
+        <label class="inline-field"><span>Enrichment Notes</span><textarea class="workflow-textarea" rows="2" data-contact-field="enrichmentNotes">${escapeHtml(company.enrichmentNotes || "")}</textarea></label>
+        <div class="workflow-actions">
+          <button class="secondary-btn" type="button" data-save-contact-fields="${escapeAttribute(company.id)}">Save Contact Fields</button>
+        </div>
+      </section>
       ${primaryContact ? renderBestContactCard(primaryContact) : renderNaPanel("No verified public contact person found yet.")}
       <div class="overview-grid">
         ${renderLinkCard("Website", company.website)}
         ${renderLinkCard("Google Profile", company.source_url)}
-        ${renderLinkCard("Booking", company.booking_url || "")}
-        ${renderLinkCard("Instagram", company.instagram_url || "")}
-        ${renderLinkCard("Facebook", company.facebook_url || "")}
+        ${renderLinkCard("Email", company.primaryEmail ? `mailto:${company.primaryEmail}` : "")}
+        ${renderLinkCard("Contact Page", company.websiteContactPageUrl || "")}
+        ${renderLinkCard("Booking", company.bookingUrl || company.booking_url || "")}
+        ${renderLinkCard("Instagram", company.instagramUrl || company.instagram_url || "")}
+        ${renderLinkCard("Facebook", company.facebookUrl || company.facebook_url || "")}
+        ${renderLinkCard("LinkedIn", company.linkedinUrl || company.linkedin_url || "")}
       </div>
+      ${renderSourceLinks(company)}
       <div class="detail-section">
         <p class="detail-section-title">Contact Records</p>
         ${
@@ -1600,6 +1693,29 @@ function renderLinkCard(label, url) {
   `;
 }
 
+function renderSourceLinks(company) {
+  const links = Array.isArray(company.sourceLinks) ? company.sourceLinks : [];
+  if (!links.length) {
+    return "";
+  }
+
+  return `
+    <div class="source-list">
+      ${links
+        .slice(0, 8)
+        .map(
+          (url) => `
+          <div class="source-item">
+            <span class="source-label">Enrichment source</span>
+            <a class="link" href="${escapeAttribute(url)}" target="_blank" rel="noreferrer">${escapeHtml(stripProtocol(url))}</a>
+          </div>
+        `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function renderContactActionButtons(contact) {
   return `
     <button
@@ -1678,6 +1794,14 @@ function readContactPayload(button) {
     email: button.getAttribute("data-email") || "",
     phone: button.getAttribute("data-phone") || "",
   };
+}
+
+function readContactFieldsPayload(container) {
+  const payload = {};
+  container.querySelectorAll("[data-contact-field]").forEach((field) => {
+    payload[field.getAttribute("data-contact-field")] = field.value || "";
+  });
+  return payload;
 }
 
 function readCommunicationPayload(container, companyId) {

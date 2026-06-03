@@ -16,6 +16,7 @@ const DEFAULT_SEARCH_KEYWORD = "Salon";
 const DEFAULT_STATE = "TX";
 const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
 const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
+const SAVED_LISTS_KEY = "find-any-company.saved-lists";
 const PROSPECT_WORKFLOWS_KEY = "find-any-company.prospect-workflows";
 const CLIENTS_KEY = "find-any-company.clients";
 const MANUAL_PROSPECTS_KEY = "find-any-company.manual-prospects";
@@ -398,6 +399,8 @@ const state = {
   selectedClientId: null,
   activeClientTab: "overview",
   savedSearches: loadSavedSearches(),
+  savedLists: loadSavedLists(),
+  selectedListId: "",
   savedCompanies: loadSavedCompanies(),
   clients: getClients(),
   hiddenProspects: loadHiddenProspects(),
@@ -475,6 +478,10 @@ const elements = {
   gridViewButton: document.querySelector("#grid-view-button"),
   scanVisibleButton: document.querySelector("#scan-visible-button"),
   exportVisibleButton: document.querySelector("#export-visible-button"),
+  exportSavedProspectsButton: document.querySelector("#export-saved-prospects-button"),
+  exportSelectedListButton: document.querySelector("#export-selected-list-button"),
+  exportClientsButton: document.querySelector("#export-clients-button"),
+  exportFollowupsButton: document.querySelector("#export-followups-button"),
   exportCompaniesButton: document.querySelector("#export-companies-button"),
   exportHighFitButton: document.querySelector("#export-high-fit-button"),
   exportContactsButton: document.querySelector("#export-contacts-button"),
@@ -590,10 +597,25 @@ function bindEvents() {
   elements.pauseQueueButton.addEventListener("click", pauseScanQueue);
   elements.resumeQueueButton.addEventListener("click", resumeScanQueue);
   elements.cancelQueueButton.addEventListener("click", cancelScanQueue);
-  elements.exportVisibleButton.addEventListener("click", exportVisibleCompaniesCsv);
-  elements.exportCompaniesButton.addEventListener("click", () => downloadFile("/api/exports/companies.csv"));
+  elements.exportVisibleButton.addEventListener("click", () =>
+    exportProspectsToCsv(state.filteredCompanies, `client-finder-search-results-${getTodayDateKey()}.csv`)
+  );
+  elements.exportSavedProspectsButton?.addEventListener("click", () =>
+    exportProspectsToCsv(getSavedProspectCompanies(), `client-finder-saved-prospects-${getTodayDateKey()}.csv`)
+  );
+  elements.exportSelectedListButton?.addEventListener("click", exportSelectedListCsv);
+  elements.exportClientsButton?.addEventListener("click", () =>
+    exportClientsToCsv(state.clients, `client-finder-clients-${getTodayDateKey()}.csv`)
+  );
+  elements.exportFollowupsButton?.addEventListener("click", () =>
+    exportProspectsToCsv(getFollowUpDueProspects(), `client-finder-follow-ups-due-${getTodayDateKey()}.csv`)
+  );
+  elements.exportCompaniesButton?.addEventListener("click", () => downloadFile("/api/exports/companies.csv"));
   elements.exportHighFitButton.addEventListener("click", () =>
-    downloadFile("/api/exports/high-fit-companies.csv")
+    exportProspectsToCsv(
+      getSavedProspectCompanies().filter((company) => ["Best Prospect", "Strong Prospect"].includes(company.opportunityPriority || company.lead_label)),
+      `client-finder-high-priority-prospects-${getTodayDateKey()}.csv`
+    )
   );
   elements.exportContactsButton.addEventListener("click", () => downloadFile("/api/exports/contacts.csv"));
   elements.exportOutreachButton.addEventListener("click", () =>
@@ -1292,22 +1314,25 @@ function paginate() {
 function render() {
   const isSavedView = state.activeView === "saved";
   const isClientsView = state.activeView === "clients";
-  const visibleCount = isClientsView ? state.clients.length : state.filteredCompanies.length;
+  const isListsView = state.activeView === "lists";
+  const visibleCount = isClientsView ? state.clients.length : isListsView ? state.savedLists.length : state.filteredCompanies.length;
   elements.resultCount.textContent = String(visibleCount);
   elements.resultsSubtitle.textContent = buildResultsSubtitle();
   elements.resultsTitle.textContent = isClientsView
     ? "Clients"
-    : isSavedView
-      ? "Saved Prospects Work Queue"
-      : "Discovery Results";
+    : isListsView
+      ? "Saved Lists"
+      : isSavedView
+        ? "Saved Prospects Work Queue"
+        : "Discovery Results";
   elements.workflowDashboard.classList.toggle("hidden", !isSavedView);
   elements.savedWorkqueueFilters?.classList.toggle("hidden", !isSavedView);
-  elements.emptyState.classList.toggle("hidden", visibleCount > 0 || state.loading);
-  elements.resultsContainer.classList.toggle("hidden", visibleCount === 0);
+  elements.emptyState.classList.toggle("hidden", isListsView || visibleCount > 0 || state.loading);
+  elements.resultsContainer.classList.toggle("hidden", !isListsView && visibleCount === 0);
   elements.loadingState.classList.toggle("hidden", !state.loading);
-  elements.pageIndicator.textContent = isClientsView ? "Clients" : `Page ${state.currentPage} of ${getTotalPages()}`;
-  elements.prevPageButton.disabled = isClientsView || state.currentPage <= 1;
-  elements.nextPageButton.disabled = isClientsView || state.currentPage >= getTotalPages();
+  elements.pageIndicator.textContent = isClientsView ? "Clients" : isListsView ? "Lists" : `Page ${state.currentPage} of ${getTotalPages()}`;
+  elements.prevPageButton.disabled = isClientsView || isListsView || state.currentPage <= 1;
+  elements.nextPageButton.disabled = isClientsView || isListsView || state.currentPage >= getTotalPages();
   elements.listViewButton?.classList.toggle("active", state.viewMode === "list");
   elements.gridViewButton?.classList.toggle("active", state.viewMode === "grid");
   elements.scanVisibleButton.disabled =
@@ -1320,6 +1345,8 @@ function render() {
 
   if (isClientsView) {
     renderClientsView();
+  } else if (isListsView) {
+    renderSavedListsView();
   } else {
     renderResultsView({
       companies: state.pagedCompanies,
@@ -1482,6 +1509,127 @@ function renderClientsView() {
   elements.resultsContainer.querySelectorAll("[data-open-client]").forEach((button) => {
     button.addEventListener("click", () => openClientProfile(button.getAttribute("data-open-client")));
   });
+}
+
+function renderSavedListsView() {
+  const selectedList = getSelectedSavedList();
+  const selectedProspects = selectedList ? getProspectsForList(selectedList.listId) : [];
+
+  elements.resultsContainer.innerHTML = `
+    <section class="workflow-card">
+      <div class="workflow-header-row">
+        <div>
+          <p class="detail-section-title">Create Saved List</p>
+          <p class="toolbar-subtle">Group saved prospects by campaign, city, vendor review, or follow-up use case.</p>
+        </div>
+      </div>
+      <div class="quote-form-grid">
+        <label class="inline-field"><span>List Name</span><input type="text" data-new-list-field="listName" placeholder="IT Staffing Maine" /></label>
+        <label class="inline-field"><span>Description</span><input type="text" data-new-list-field="description" placeholder="Companies to review this week" /></label>
+        <label class="inline-field"><span>Tags</span><input type="text" data-new-list-field="tags" placeholder="priority, outreach" /></label>
+      </div>
+      <div class="workflow-actions">
+        <button id="create-saved-list-button" class="secondary-btn" type="button">Create List</button>
+      </div>
+    </section>
+
+    <div class="prospect-list-shell">
+      <div class="prospect-list-head">
+        <span>List</span>
+        <span>Context</span>
+        <span>Prospects</span>
+        <span>Actions</span>
+      </div>
+      <div class="prospect-list">
+        ${
+          state.savedLists.length
+            ? state.savedLists.map((list) => renderSavedListRow(list)).join("")
+            : `<div class="na-panel">No saved lists yet.</div>`
+        }
+      </div>
+    </div>
+
+    ${
+      selectedList
+        ? `
+      <section class="workflow-card">
+        <div class="workflow-header-row">
+          <div>
+            <p class="detail-section-title">${escapeHtml(selectedList.listName)}</p>
+            <p class="toolbar-subtle">${escapeHtml(selectedList.description || "No description")}</p>
+          </div>
+          <div class="workflow-actions">
+            <button class="secondary-btn" type="button" data-export-list="${escapeAttribute(selectedList.listId)}">Export List</button>
+          </div>
+        </div>
+        <div class="prospect-list">
+          ${
+            selectedProspects.length
+              ? selectedProspects.map((company) => renderSavedListProspectRow(company, selectedList.listId)).join("")
+              : `<div class="na-panel">No prospects in this list yet.</div>`
+          }
+        </div>
+      </section>`
+        : ""
+    }
+  `;
+
+  elements.resultsContainer.querySelector("#create-saved-list-button")?.addEventListener("click", createSavedListFromCurrentFilters);
+  elements.resultsContainer.querySelectorAll("[data-open-list]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedListId = button.getAttribute("data-open-list") || "";
+      render();
+    });
+  });
+  elements.resultsContainer.querySelectorAll("[data-export-list]").forEach((button) => {
+    button.addEventListener("click", () => exportSavedListCsv(button.getAttribute("data-export-list") || ""));
+  });
+  elements.resultsContainer.querySelectorAll("[data-remove-from-list]").forEach((button) => {
+    button.addEventListener("click", () =>
+      removeProspectFromList(button.getAttribute("data-remove-from-list") || "", button.getAttribute("data-list-id") || "")
+    );
+  });
+  elements.resultsContainer.querySelectorAll("[data-open-list-prospect]").forEach((button) => {
+    button.addEventListener("click", () => openDetails(button.getAttribute("data-open-list-prospect")));
+  });
+}
+
+function renderSavedListRow(list) {
+  const count = getProspectsForList(list.listId).length;
+  return `
+    <article class="prospect-row ${list.listId === state.selectedListId ? "selected" : ""}">
+      <button class="prospect-main" type="button" data-open-list="${escapeAttribute(list.listId)}">
+        <span class="row-title">${escapeHtml(list.listName || "Untitled List")}</span>
+        <span class="row-subtitle">${escapeHtml(list.description || "No description")}</span>
+      </button>
+      <div class="prospect-fit">
+        <span class="stage-chip">${escapeHtml(list.searchMode || "Local")}</span>
+        <span class="row-subtitle">${escapeHtml([list.businessType, list.city, list.state].filter(Boolean).join(" - ") || "Any context")}</span>
+      </div>
+      <div class="prospect-signals"><span>${escapeHtml(String(count))} prospects</span><span>${escapeHtml((list.tags || []).join(", ") || "No tags")}</span></div>
+      <div class="prospect-actions">
+        <button class="secondary-btn" type="button" data-open-list="${escapeAttribute(list.listId)}">Open</button>
+        <button class="secondary-btn" type="button" data-export-list="${escapeAttribute(list.listId)}">Export</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderSavedListProspectRow(company, listId) {
+  return `
+    <article class="prospect-row">
+      <button class="prospect-main" type="button" data-open-list-prospect="${escapeAttribute(company.id)}">
+        <span class="row-title">${escapeHtml(company.name || "NA")}</span>
+        <span class="row-subtitle">${escapeHtml(company.industry || company.keyword || "Business")} - ${escapeHtml([company.city, company.state].filter(Boolean).join(", "))}</span>
+      </button>
+      <div class="prospect-fit"><span class="stage-chip">${escapeHtml(company.prospect_stage || "Saved")}</span><span class="row-subtitle">${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")}</span></div>
+      <div class="prospect-signals"><span>${escapeHtml(company.phone || "No phone")}</span><span>${escapeHtml(company.next_follow_up || "No follow-up")}</span></div>
+      <div class="prospect-actions">
+        <button class="secondary-btn" type="button" data-open-list-prospect="${escapeAttribute(company.id)}">Open</button>
+        <button class="secondary-btn" type="button" data-remove-from-list="${escapeAttribute(company.id)}" data-list-id="${escapeAttribute(listId)}">Remove</button>
+      </div>
+    </article>
+  `;
 }
 
 function renderClientRow(client) {
@@ -1929,6 +2077,7 @@ function renderDetail() {
     company,
     activeTab: state.activeDetailTab,
     savedCompanies: state.savedCompanies,
+    savedLists: state.savedLists,
     container: elements.detailContent,
     onChangeTab: handleDetailTabChange,
     onScanCompany: handleScanCompany,
@@ -1940,6 +2089,8 @@ function renderDetail() {
     onSetNextFollowUp: setNextFollowUp,
     onToggleMilestone: toggleMilestone,
     onCheckWebsiteQuality: checkWebsiteQuality,
+    onEnrichContactInfo: enrichProspectContactInfo,
+    onSaveContactFields: updateProspectContactFields,
     onCopyOutreachTemplate: copyOutreachTemplate,
     onMarkOutreachMilestone: markOutreachMilestone,
     senderProfile: state.senderProfile,
@@ -1959,6 +2110,8 @@ function renderDetail() {
     onMarkBadContact: (payload) => handleReviewUpdate(payload, "bad"),
     onCopyContactEmail: (payload) => copyToClipboard(payload.email, "Email copied."),
     onCopyContactPhone: (payload) => copyToClipboard(payload.phone, "Phone copied."),
+    onAddProspectToList: addProspectToList,
+    onRemoveProspectFromList: removeProspectFromList,
     onConvertToClient: convertProspectToClient,
     onOpenClientProfile: openClientProfile,
   });
@@ -5048,63 +5201,93 @@ function renderTodayFollowups() {
   });
 }
 
-function exportVisibleCompaniesCsv() {
-  const fields = [
-    "name",
-    "industry",
-    "city",
-    "state",
-    "address",
-    "website",
-    "websiteStatus",
-    "hasWebsite",
-    "mobileAppStatus",
-    "hasMobileApp",
-    "bookingPlatform",
-    "phone",
-    "source",
-    "lead_score",
-    "lead_label",
-    "outreach_ready",
-    "review_status",
-    "prospect_stage",
-    "next_follow_up",
-    "next_action",
-    "follow_up_priority",
-    "last_contacted_at",
-    "quote_status",
-    "latest_note",
-    "scan_status",
-    "contacts_found",
-    "best_contact",
-    "primary_email",
-    "email_status",
-    "contact_type",
-    "confidence_score",
+function exportProspectsToCsv(prospects, filename) {
+  const columns = [
+    ["Business Name", (company) => company.name || company.businessName],
+    ["Business Type", (company) => company.keyword || company.industry || company.businessType],
+    ["Search Mode", (company) => company.searchMode],
+    ["Address", (company) => company.address],
+    ["City", (company) => company.city],
+    ["State", (company) => company.state],
+    ["Phone", (company) => company.phone],
+    ["Email", (company) => company.primaryEmail || company.primary_contact?.email],
+    ["Contact Person", (company) => company.contactPersonName || company.primary_contact?.name],
+    ["Website URL", (company) => company.website || company.websiteUrl],
+    ["Website Status", (company) => company.websiteStatus],
+    ["Website Quality Status", (company) => company.websiteQualityStatus],
+    ["Mobile App Status", (company) => company.mobileAppStatus],
+    ["Booking Platform", (company) => company.bookingPlatform],
+    ["Booking URL", (company) => company.bookingUrl || company.booking_url],
+    ["Facebook URL", (company) => company.facebookUrl || company.facebook_url],
+    ["Instagram URL", (company) => company.instagramUrl || company.instagram_url],
+    ["LinkedIn URL", (company) => company.linkedinUrl || company.linkedin_url || company.primary_contact?.linkedin_url],
+    ["Rating", (company) => company.rating],
+    ["Review Count", (company) => company.reviewCount || company.reviews],
+    ["Opportunity Score", (company) => company.opportunityScore || company.lead_score],
+    ["Opportunity Priority", (company) => company.opportunityPriority || company.lead_label],
+    ["Current Stage", (company) => company.prospect_stage || company.stage],
+    ["Last Contacted", (company) => company.last_contacted_at],
+    ["Next Follow-Up", (company) => company.next_follow_up],
+    ["Quote Status", (company) => company.quote_status],
+    ["Notes", (company) => getLatestProspectNote(company)],
+    ["Source", (company) => company.source],
+    ["Google Maps/Profile URL", (company) => company.source_url || company.googleProfileUrl || company.mapsUrl],
   ];
+  downloadCsv(filename, columns, prospects || []);
+}
 
-  const rows = [fields.join(",")];
-  state.pagedCompanies.forEach((company) => {
-    rows.push(
-      fields
-        .map((field) =>
-          escapeCsvValue(
-            {
-              ...company,
-              best_contact: company.primary_contact?.name || "",
-              primary_email: company.primary_contact?.email || "",
-              email_status: company.primary_contact?.email_status || "none",
-              contact_type: company.primary_contact?.contact_type || "",
-              confidence_score: company.primary_contact?.confidence_score || company.confidence_score,
-              latest_note: company.communication_notes?.[0]?.text || "",
-            }[field]
-          )
-        )
-        .join(",")
-    );
-  });
+function exportClientsToCsv(clients, filename) {
+  const columns = [
+    ["Client Name", (client) => client.businessName],
+    ["Business Type", (client) => client.businessType],
+    ["Owner/Manager", (client) => client.ownerOrManagerName],
+    ["Phone", (client) => client.phone],
+    ["Email", (client) => client.email],
+    ["Address", (client) => client.address],
+    ["Project Status", (client) => client.projectStatus],
+    ["Client Status", (client) => client.currentClientStatus],
+    ["Payment Status", (client) => normalizePaymentSummary(client.paymentSummary, client).paymentStatus],
+    ["Balance Due", (client) => calculatePaymentTotals(normalizePaymentSummary(client.paymentSummary, client), normalizePaymentRecords(client.paymentRecords)).balanceDue],
+    ["Support Status", (client) => normalizeSupportPlan(client.supportPlan, client).supportStatus],
+    ["Maintenance Plan", (client) => normalizeSupportPlan(client.supportPlan, client).maintenancePlan],
+    ["Created Date", (client) => client.createdAt],
+  ];
+  downloadCsv(filename, columns, clients || []);
+}
 
-  downloadBlob("visible_companies.csv", rows.join("\n"));
+function downloadCsv(filename, columns, records) {
+  const headers = columns.map(([label]) => escapeCsvValue(label)).join(",");
+  const rows = records.map((record) => columns.map(([, getter]) => escapeCsvValue(getter(record) ?? "")).join(","));
+  downloadBlob(filename, [headers, ...rows].join("\n"));
+}
+
+function getLatestProspectNote(company) {
+  const notes = Array.isArray(company.notes) ? company.notes : [];
+  if (notes[0]?.text) return notes[0].text;
+  if (Array.isArray(company.communication_notes) && company.communication_notes[0]?.text) return company.communication_notes[0].text;
+  return company.latest_communication_note || "";
+}
+
+function getFollowUpDueProspects() {
+  return getSavedProspectCompanies().filter((company) => ["due_today", "overdue"].includes(getFollowUpState(company.next_follow_up)));
+}
+
+function exportSelectedListCsv() {
+  const list = getSelectedSavedList();
+  if (!list) {
+    elements.statusMessage.textContent = "No saved list selected.";
+    return;
+  }
+  exportSavedListCsv(list.listId);
+}
+
+function exportSavedListCsv(listId) {
+  const list = state.savedLists.find((item) => item.listId === listId);
+  if (!list) {
+    elements.statusMessage.textContent = "Saved list not found.";
+    return;
+  }
+  exportProspectsToCsv(getProspectsForList(list.listId), `client-finder-list-${slugifyFilename(list.listName)}-${getTodayDateKey()}.csv`);
 }
 
 function setViewMode(viewMode) {
@@ -5889,6 +6072,27 @@ function applyProspectWorkflow(company) {
         : [],
     websiteCheckStatus: workflow.websiteCheckStatus || company.websiteCheckStatus || "Not Checked",
     websiteCheckedAt: workflow.websiteCheckedAt || company.websiteCheckedAt || "",
+    primaryEmail: workflow.primaryEmail || company.primaryEmail || company.primary_contact?.email || "",
+    additionalEmails: Array.isArray(workflow.additionalEmails)
+      ? workflow.additionalEmails
+      : Array.isArray(company.additionalEmails)
+        ? company.additionalEmails
+        : [],
+    contactPersonName: workflow.contactPersonName || company.contactPersonName || company.primary_contact?.name || "",
+    contactPersonTitle: workflow.contactPersonTitle || company.contactPersonTitle || company.primary_contact?.title || "",
+    facebookUrl: workflow.facebookUrl || company.facebookUrl || company.facebook_url || "",
+    instagramUrl: workflow.instagramUrl || company.instagramUrl || company.instagram_url || "",
+    linkedinUrl: workflow.linkedinUrl || company.linkedinUrl || company.linkedin_url || company.primary_contact?.linkedin_url || "",
+    websiteContactPageUrl: workflow.websiteContactPageUrl || company.websiteContactPageUrl || "",
+    bookingUrl: workflow.bookingUrl || company.bookingUrl || company.booking_url || "",
+    sourceLinks: Array.isArray(workflow.sourceLinks)
+      ? workflow.sourceLinks
+      : Array.isArray(company.sourceLinks)
+        ? company.sourceLinks
+        : [],
+    enrichmentStatus: workflow.enrichmentStatus || company.enrichmentStatus || "Not Checked",
+    enrichmentCheckedAt: workflow.enrichmentCheckedAt || company.enrichmentCheckedAt || "",
+    enrichmentNotes: workflow.enrichmentNotes || company.enrichmentNotes || "",
     outreach_templates:
       workflow.outreach_templates && typeof workflow.outreach_templates === "object"
         ? workflow.outreach_templates
@@ -7160,6 +7364,19 @@ function ensureProspectWorkflow(companyId, company) {
     websiteQualityReasons: Array.isArray(company?.websiteQualityReasons) ? company.websiteQualityReasons : [],
     websiteCheckStatus: company?.websiteCheckStatus || "Not Checked",
     websiteCheckedAt: company?.websiteCheckedAt || "",
+    primaryEmail: company?.primaryEmail || company?.primary_contact?.email || "",
+    additionalEmails: Array.isArray(company?.additionalEmails) ? company.additionalEmails : [],
+    contactPersonName: company?.contactPersonName || company?.primary_contact?.name || "",
+    contactPersonTitle: company?.contactPersonTitle || company?.primary_contact?.title || "",
+    facebookUrl: company?.facebookUrl || company?.facebook_url || "",
+    instagramUrl: company?.instagramUrl || company?.instagram_url || "",
+    linkedinUrl: company?.linkedinUrl || company?.linkedin_url || company?.primary_contact?.linkedin_url || "",
+    websiteContactPageUrl: company?.websiteContactPageUrl || "",
+    bookingUrl: company?.bookingUrl || company?.booking_url || "",
+    sourceLinks: Array.isArray(company?.sourceLinks) ? company.sourceLinks : [],
+    enrichmentStatus: company?.enrichmentStatus || "Not Checked",
+    enrichmentCheckedAt: company?.enrichmentCheckedAt || "",
+    enrichmentNotes: company?.enrichmentNotes || "",
     outreach_templates: company?.outreach_templates && typeof company.outreach_templates === "object" ? company.outreach_templates : {},
     outreach_tone: company?.outreach_tone || "Professional",
     searchMode: company?.searchMode || DEFAULT_SEARCH_MODE,
@@ -7569,6 +7786,13 @@ function buildResultsSubtitle() {
   const filters = getActiveFilters();
   if (state.activeView === "clients") {
     return `${state.clients.length} client${state.clients.length === 1 ? "" : "s"} in localStorage.`;
+  }
+
+  if (state.activeView === "lists") {
+    const selectedList = getSelectedSavedList();
+    return selectedList
+      ? `${state.savedLists.length} saved list${state.savedLists.length === 1 ? "" : "s"}. Open list: ${selectedList.listName}.`
+      : "Create a saved list to organize prospects by use case.";
   }
 
   if (state.activeView === "saved") {
@@ -8304,6 +8528,15 @@ function downloadBlob(filename, content) {
   URL.revokeObjectURL(url);
 }
 
+function slugifyFilename(value) {
+  return String(value || "saved-list")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60) || "saved-list";
+}
+
 function loadSavedSearches() {
   const parsed = readLocalJson(SAVED_SEARCHES_KEY, []);
   return Array.isArray(parsed) ? parsed : [];
@@ -8316,6 +8549,232 @@ function persistSavedSearches() {
 function loadSavedCompanies() {
   const parsed = readLocalJson(SAVED_COMPANIES_KEY, []);
   return Array.isArray(parsed) ? [...new Set(parsed.map((value) => String(value || "").trim()).filter(Boolean))] : [];
+}
+
+function loadSavedLists() {
+  const parsed = readLocalJson(SAVED_LISTS_KEY, []);
+  return Array.isArray(parsed) ? parsed.map(normalizeSavedList).filter((list) => list.listId) : [];
+}
+
+function persistSavedLists() {
+  writeLocalJson(SAVED_LISTS_KEY, state.savedLists.map(normalizeSavedList));
+}
+
+function normalizeSavedList(list) {
+  return {
+    listId: String(list?.listId || `list-${Date.now()}`).trim(),
+    listName: String(list?.listName || "Untitled List").trim(),
+    description: String(list?.description || "").trim(),
+    searchMode: String(list?.searchMode || "").trim(),
+    businessTypeGroup: String(list?.businessTypeGroup || "").trim(),
+    businessType: String(list?.businessType || "").trim(),
+    city: String(list?.city || "").trim(),
+    state: String(list?.state || "").trim(),
+    tags: Array.isArray(list?.tags)
+      ? list.tags.map((tag) => String(tag || "").trim()).filter(Boolean)
+      : String(list?.tags || "").split(",").map((tag) => tag.trim()).filter(Boolean),
+    prospectIds: Array.isArray(list?.prospectIds) ? [...new Set(list.prospectIds.map((id) => String(id || "").trim()).filter(Boolean))] : [],
+    createdAt: list?.createdAt || new Date().toISOString(),
+    updatedAt: list?.updatedAt || new Date().toISOString(),
+  };
+}
+
+function createSavedListFromCurrentFilters() {
+  const filters = getActiveFilters();
+  const payload = {};
+  elements.resultsContainer.querySelectorAll("[data-new-list-field]").forEach((field) => {
+    payload[field.getAttribute("data-new-list-field")] = field.value || "";
+  });
+  const listName = String(payload.listName || "").trim();
+  if (!listName) {
+    elements.statusMessage.textContent = "Enter a list name first.";
+    return;
+  }
+
+  const list = normalizeSavedList({
+    listId: `list-${Date.now()}`,
+    listName,
+    description: payload.description || "",
+    tags: payload.tags || "",
+    searchMode: filters.searchMode || "",
+    businessTypeGroup: filters.industry || "",
+    businessType: filters.keywordLabel || "",
+    city: filters.cityLabel || "",
+    state: filters.state || "",
+    prospectIds: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  state.savedLists = [list, ...state.savedLists];
+  state.selectedListId = list.listId;
+  persistSavedLists();
+  elements.statusMessage.textContent = `Created saved list ${list.listName}.`;
+  render();
+}
+
+async function enrichProspectContactInfo(companyId) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  elements.statusMessage.textContent = `Checking contact enrichment for ${company.name || "prospect"}...`;
+  updateProspectContactFields(companyId, {
+    enrichmentStatus: "Not Checked",
+    enrichmentCheckedAt: new Date().toISOString(),
+  }, { skipActivity: true, skipRender: true });
+
+  try {
+    const response = await fetch("/api/prospects/enrich-contact", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        websiteUrl: company.website || company.websiteUrl || "",
+        businessName: company.name || company.businessName || "",
+        phone: company.phone || "",
+        address: company.address || "",
+        sourceUrl: company.source_url || "",
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.success) {
+      throw new Error(payload.error || "Unable to enrich contact info.");
+    }
+
+    const before = getContactCompleteness(company);
+    updateProspectContactFields(companyId, payload.enrichment || {}, { skipActivity: true, skipRender: true, fillEmptyOnly: true });
+    const updated = state.companies.find((item) => item.id === companyId) || company;
+    const after = getContactCompleteness(updated);
+    recordProspectActivity(companyId, "Contact enrichment checked", "System", "contact-enrichment-checked");
+    if (after > before) {
+      recordProspectActivity(companyId, "Contact enrichment found new info", "System", "contact-enrichment-found");
+    }
+    elements.statusMessage.textContent = payload.enrichment?.enrichmentStatus === "Failed"
+      ? "Contact enrichment needs review."
+      : "Contact enrichment checked.";
+  } catch (error) {
+    updateProspectContactFields(companyId, {
+      enrichmentStatus: "Failed",
+      enrichmentCheckedAt: new Date().toISOString(),
+      enrichmentNotes: "Unable to enrich contact info.",
+    }, { skipActivity: true, skipRender: true });
+    recordProspectActivity(companyId, "Contact enrichment checked", "System", "contact-enrichment-checked");
+    elements.statusMessage.textContent = "Unable to enrich contact info.";
+  }
+
+  applyFilters();
+  renderDetail();
+}
+
+function updateProspectContactFields(companyId, fields = {}, options = {}) {
+  const company = state.companies.find((item) => item.id === companyId);
+  if (!company) {
+    return;
+  }
+
+  ensureSavedProspect(company);
+  const workflow = getProspectWorkflow(companyId);
+  const now = new Date().toISOString();
+  const nextFields = buildContactFieldUpdates({ ...company, ...workflow }, fields, Boolean(options.fillEmptyOnly));
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    ...nextFields,
+    updated_at: now,
+    lastUpdatedAt: now,
+  };
+  persistProspectWorkflows();
+  applyProspectWorkflow(company);
+  if (!options.skipActivity) {
+    recordProspectActivity(companyId, "Updated contact enrichment fields", "Manual", "contact-fields-update");
+  }
+  if (!options.skipRender) {
+    elements.statusMessage.textContent = "Contact fields saved.";
+    renderDetail();
+    applyFilters();
+  }
+}
+
+function buildContactFieldUpdates(existing, incoming, fillEmptyOnly = false) {
+  const fields = [
+    "primaryEmail",
+    "additionalEmails",
+    "contactPersonName",
+    "contactPersonTitle",
+    "facebookUrl",
+    "instagramUrl",
+    "linkedinUrl",
+    "websiteContactPageUrl",
+    "bookingUrl",
+    "sourceLinks",
+    "enrichmentStatus",
+    "enrichmentCheckedAt",
+    "enrichmentNotes",
+    "bookingPlatform",
+    "socialPlatform",
+  ];
+  return fields.reduce((updates, field) => {
+    const value = incoming[field];
+    const hasIncoming = Array.isArray(value) ? value.length > 0 : String(value ?? "").trim() !== "";
+    const hasExisting = Array.isArray(existing[field]) ? existing[field].length > 0 : String(existing[field] ?? "").trim() !== "";
+    if (!hasIncoming || (fillEmptyOnly && hasExisting)) {
+      return updates;
+    }
+    updates[field] = value;
+    return updates;
+  }, {});
+}
+
+function getContactCompleteness(company) {
+  return [
+    company.primaryEmail || company.primary_contact?.email,
+    company.contactPersonName || company.primary_contact?.name,
+    company.facebookUrl,
+    company.instagramUrl,
+    company.linkedinUrl || company.primary_contact?.linkedin_url,
+    company.bookingUrl,
+    company.websiteContactPageUrl,
+  ].filter(Boolean).length;
+}
+
+function getSelectedSavedList() {
+  return state.savedLists.find((list) => list.listId === state.selectedListId) || state.savedLists[0] || null;
+}
+
+function getProspectsForList(listId) {
+  const list = state.savedLists.find((item) => item.listId === listId);
+  if (!list) {
+    return [];
+  }
+  return list.prospectIds
+    .map((id) => state.companies.find((company) => company.id === id) || state.manualProspects.find((company) => company.id === id))
+    .filter(Boolean)
+    .map((company) => applyProspectWorkflow(company));
+}
+
+function addProspectToList(companyId, listId) {
+  if (!companyId || !listId) {
+    return;
+  }
+  state.savedLists = state.savedLists.map((list) =>
+    list.listId === listId
+      ? normalizeSavedList({ ...list, prospectIds: [...new Set([...(list.prospectIds || []), companyId])], updatedAt: new Date().toISOString() })
+      : list
+  );
+  persistSavedLists();
+  elements.statusMessage.textContent = "Prospect added to list.";
+  renderDetail();
+  if (state.activeView === "lists") render();
+}
+
+function removeProspectFromList(companyId, listId) {
+  state.savedLists = state.savedLists.map((list) =>
+    list.listId === listId
+      ? normalizeSavedList({ ...list, prospectIds: (list.prospectIds || []).filter((id) => id !== companyId), updatedAt: new Date().toISOString() })
+      : list
+  );
+  persistSavedLists();
+  elements.statusMessage.textContent = "Prospect removed from list.";
+  render();
 }
 
 function persistSavedCompanies() {

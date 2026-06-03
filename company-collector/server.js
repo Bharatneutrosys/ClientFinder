@@ -139,6 +139,30 @@ app.get("/api/prospects/check-website-quality", async (request, response) => {
   }
 });
 
+app.post("/api/prospects/enrich-contact", async (request, response) => {
+  try {
+    const websiteUrl = String(request.body?.websiteUrl || "").trim();
+    const businessName = String(request.body?.businessName || "").trim();
+    const sourceUrl = String(request.body?.sourceUrl || "").trim();
+    const enrichment = await enrichProspectContactInfo({ websiteUrl, businessName, sourceUrl });
+    response.json({
+      success: true,
+      enrichment,
+      error: null,
+    });
+  } catch (error) {
+    response.status(502).json({
+      success: false,
+      enrichment: {
+        enrichmentStatus: "Failed",
+        enrichmentCheckedAt: new Date().toISOString(),
+        enrichmentNotes: "Unable to enrich contact info.",
+      },
+      error: "Unable to enrich contact info.",
+    });
+  }
+});
+
 app.get("/api/companies", async (_request, response) => {
   try {
     const companies = await loadCompanies();
@@ -1300,6 +1324,193 @@ async function analyzeWebsiteQuality(websiteUrl, { businessName = "" } = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function enrichProspectContactInfo({ websiteUrl, businessName = "", sourceUrl = "" } = {}) {
+  const now = new Date().toISOString();
+  const website = String(websiteUrl || "").trim();
+  const base = {
+    primaryEmail: "",
+    additionalEmails: [],
+    contactPersonName: "",
+    contactPersonTitle: "",
+    facebookUrl: "",
+    instagramUrl: "",
+    linkedinUrl: "",
+    websiteContactPageUrl: "",
+    bookingUrl: "",
+    sourceLinks: [sourceUrl].filter(Boolean),
+    enrichmentStatus: "Not Checked",
+    enrichmentCheckedAt: now,
+    enrichmentNotes: "",
+  };
+
+  if (!website) {
+    return {
+      ...base,
+      enrichmentStatus: "No Extra Info Found",
+      enrichmentNotes: "No website URL available.",
+    };
+  }
+
+  const websiteModel = classifyWebsiteStatus(website, { businessName });
+  if (websiteModel.websiteStatus === "No Website") {
+    return {
+      ...base,
+      enrichmentStatus: "No Extra Info Found",
+      enrichmentNotes: "No normal website URL available.",
+    };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6500);
+  try {
+    const candidateUrls = buildWebsiteCandidateUrls(website);
+    for (const candidateUrl of candidateUrls) {
+      const homepageResponse = await fetch(candidateUrl, {
+        signal: controller.signal,
+        headers: {
+          accept: "text/html,application/xhtml+xml",
+          "user-agent": "ClientFinder/1.0",
+        },
+      });
+      const contentType = String(homepageResponse.headers.get("content-type") || "").toLowerCase();
+      if (!homepageResponse.ok || !contentType.includes("text/html")) {
+        continue;
+      }
+
+      const html = await homepageResponse.text();
+      const resolvedUrl = homepageResponse.url || candidateUrl;
+      const emails = extractEmailsFromHtml(html);
+      const socialLinks = extractSocialLinksFromHtml(html, resolvedUrl);
+      const booking = extractBookingLinksFromHtml(html, resolvedUrl);
+      const contactPage = extractFirstMatchingLink(html, resolvedUrl, /(contact|about)/i);
+      const sourceLinks = dedupeValues([
+        sourceUrl,
+        resolvedUrl,
+        contactPage,
+        socialLinks.facebookUrl,
+        socialLinks.instagramUrl,
+        socialLinks.linkedinUrl,
+        booking.bookingUrl,
+      ]);
+      const foundCount = emails.length + Object.values(socialLinks).filter(Boolean).length + (booking.bookingUrl ? 1 : 0) + (contactPage ? 1 : 0);
+
+      return {
+        ...base,
+        primaryEmail: emails[0] || "",
+        additionalEmails: emails.slice(1),
+        facebookUrl: socialLinks.facebookUrl || "",
+        instagramUrl: socialLinks.instagramUrl || "",
+        linkedinUrl: socialLinks.linkedinUrl || "",
+        websiteContactPageUrl: contactPage || "",
+        bookingUrl: booking.bookingUrl || "",
+        bookingPlatform: booking.bookingPlatform || websiteModel.bookingPlatform || "Unknown",
+        socialPlatform: socialLinks.socialPlatform || websiteModel.socialPlatform || "Unknown",
+        sourceLinks,
+        enrichmentStatus: foundCount >= 2 ? "Enriched" : foundCount === 1 ? "Partial" : "No Extra Info Found",
+        enrichmentNotes: foundCount ? "Homepage checked for email, social, contact, and booking links." : "Homepage checked; no extra info found.",
+      };
+    }
+
+    return {
+      ...base,
+      enrichmentStatus: "Needs Review",
+      enrichmentNotes: "Website did not return a readable HTML homepage.",
+    };
+  } catch (error) {
+    return {
+      ...base,
+      enrichmentStatus: "Failed",
+      enrichmentNotes: "Homepage enrichment failed.",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function extractEmailsFromHtml(html) {
+  const body = String(html || "");
+  const mailtoEmails = [...body.matchAll(/mailto:([^"'?\s>]+)/gi)].map((match) => decodeURIComponent(match[1]));
+  const visibleEmails = [...body.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map((match) => match[0]);
+  return dedupeValues([...mailtoEmails, ...visibleEmails])
+    .filter((email) => !/\.(png|jpg|jpeg|gif|webp|svg)$/i.test(email))
+    .slice(0, 5);
+}
+
+function extractSocialLinksFromHtml(html, baseUrl) {
+  const links = extractLinksFromHtml(html, baseUrl);
+  const facebookUrl = links.find((url) => /facebook\.com/i.test(url)) || "";
+  const instagramUrl = links.find((url) => /instagram\.com/i.test(url)) || "";
+  const linkedinUrl = links.find((url) => /linkedin\.com/i.test(url)) || "";
+  const tiktokUrl = links.find((url) => /tiktok\.com/i.test(url)) || "";
+  return {
+    facebookUrl,
+    instagramUrl,
+    linkedinUrl,
+    tiktokUrl,
+    socialPlatform: facebookUrl ? "Facebook" : instagramUrl ? "Instagram" : linkedinUrl ? "LinkedIn" : tiktokUrl ? "TikTok" : "Unknown",
+  };
+}
+
+function extractBookingLinksFromHtml(html, baseUrl) {
+  const links = extractLinksFromHtml(html, baseUrl);
+  const bookingUrl =
+    links.find((url) => /(fresha|booksy|vagaro|glossgenius|squareup|mindbody|calendly|acuity|setmore|simplybook)/i.test(url)) ||
+    links.find((url) => /(book|booking|appointment|schedule)/i.test(url)) ||
+    "";
+  return {
+    bookingUrl,
+    bookingPlatform: detectEnrichmentBookingPlatform(bookingUrl),
+  };
+}
+
+function extractFirstMatchingLink(html, baseUrl, pattern) {
+  return extractLinksFromHtml(html, baseUrl).find((url) => pattern.test(url)) || "";
+}
+
+function extractLinksFromHtml(html, baseUrl) {
+  return dedupeValues(
+    [...String(html || "").matchAll(/href=["']([^"']+)["']/gi)]
+      .map((match) => resolveHomepageLink(match[1], baseUrl))
+      .filter(Boolean)
+  ).slice(0, 100);
+}
+
+function resolveHomepageLink(value, baseUrl) {
+  const raw = String(value || "").trim();
+  if (!raw || /^(javascript:|tel:|sms:)/i.test(raw)) {
+    return "";
+  }
+  if (/^mailto:/i.test(raw)) {
+    return raw;
+  }
+  try {
+    return new URL(raw, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function detectEnrichmentBookingPlatform(url) {
+  const value = String(url || "").toLowerCase();
+  if (!value) return "Unknown";
+  if (value.includes("fresha")) return "Fresha";
+  if (value.includes("booksy")) return "Booksy";
+  if (value.includes("vagaro")) return "Vagaro";
+  if (value.includes("glossgenius")) return "GlossGenius";
+  if (value.includes("squareup")) return "Square";
+  if (value.includes("mindbody")) return "Mindbody";
+  if (value.includes("calendly")) return "Calendly";
+  if (value.includes("acuity")) return "Acuity";
+  if (value.includes("setmore")) return "Setmore";
+  if (value.includes("simplybook")) return "SimplyBook";
+  if (/(book|booking|appointment|schedule)/i.test(value)) return "Other Booking Platform";
+  return "Unknown";
+}
+
+function dedupeValues(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function getWebsiteQualityReasonLabel(websiteStatus) {
