@@ -23,6 +23,20 @@ const MANUAL_PROSPECTS_KEY = "find-any-company.manual-prospects";
 const HIDDEN_PROSPECTS_KEY = "find-any-company.hidden-prospects";
 const SENDER_PROFILE_KEY = "find-any-company.sender-profile";
 const SCAN_QUEUE_KEY = "find-any-company.scan-queue";
+const STORAGE_MODE_KEY = "CLIENT_FINDER_STORAGE_MODE";
+const BACKUP_SCHEMA_VERSION = "1.0";
+const CLIENT_FINDER_LOCAL_KEYS = [
+  SAVED_SEARCHES_KEY,
+  SAVED_COMPANIES_KEY,
+  SAVED_LISTS_KEY,
+  PROSPECT_WORKFLOWS_KEY,
+  CLIENTS_KEY,
+  MANUAL_PROSPECTS_KEY,
+  HIDDEN_PROSPECTS_KEY,
+  SENDER_PROFILE_KEY,
+  SCAN_QUEUE_KEY,
+  STORAGE_MODE_KEY,
+];
 const DEFAULT_BATCH_CITIES = [
   { city: "Dallas", state: "TX" },
   { city: "Austin", state: "TX" },
@@ -401,6 +415,7 @@ const state = {
   savedSearches: loadSavedSearches(),
   savedLists: loadSavedLists(),
   selectedListId: "",
+  pendingBackup: null,
   savedCompanies: loadSavedCompanies(),
   clients: getClients(),
   hiddenProspects: loadHiddenProspects(),
@@ -1593,6 +1608,8 @@ function renderFollowUpRow(company) {
 function renderSettingsView() {
   const status = storageService.getStatus();
   const modeLabel = status.activeMode === "localStorage" ? "LocalStorage" : titleCase(status.activeMode);
+  const summary = getLocalDataSummary();
+  const readiness = getMigrationReadinessStatus(summary, status);
   elements.resultsContainer.innerHTML = `
     <section class="workflow-card">
       <p class="detail-section-title">Workspace</p>
@@ -1613,7 +1630,290 @@ function renderSettingsView() {
       </div>
       <p class="toolbar-subtle">Local mode is intended for the MVP. Supabase migration is prepared but not fully enabled.</p>
     </section>
+    <section class="workflow-card">
+      <p class="detail-section-title">Migration Readiness</p>
+      <div class="overview-grid">
+        <div class="overview-card"><span class="overview-label">Local Data Detected</span><strong>${summary.localDataDetected ? "Yes" : "No"}</strong></div>
+        <div class="overview-card"><span class="overview-label">Saved Prospects</span><strong>${escapeHtml(String(summary.savedProspectsCount))}</strong></div>
+        <div class="overview-card"><span class="overview-label">Clients</span><strong>${escapeHtml(String(summary.clientsCount))}</strong></div>
+        <div class="overview-card"><span class="overview-label">Saved Lists</span><strong>${escapeHtml(String(summary.savedListsCount))}</strong></div>
+        <div class="overview-card"><span class="overview-label">Supabase Configured</span><strong>${status.supabaseConfigured ? "Yes" : "No"}</strong></div>
+        <div class="overview-card"><span class="overview-label">Migration Status</span><strong>${escapeHtml(readiness.migrationStatus)}</strong></div>
+      </div>
+      <p class="toolbar-subtle">${escapeHtml(readiness.note)}</p>
+    </section>
+    <section class="workflow-card">
+      <p class="detail-section-title">Data Safety</p>
+      <p class="toolbar-subtle">Backup files may contain business notes, client records, payment references, and access references. Store backup files securely.</p>
+      <div class="workflow-actions">
+        <button id="export-local-backup-button" class="secondary-btn" type="button">Export Local Backup</button>
+        <label class="secondary-btn inline-link-btn" for="import-local-backup-input">Choose Backup File</label>
+        <input id="import-local-backup-input" class="hidden" type="file" accept="application/json,.json" />
+      </div>
+      <div id="backup-restore-summary" class="toolbar-subtle">No backup selected.</div>
+      <div class="quote-form-grid">
+        <label class="inline-field">
+          <span>Restore Mode</span>
+          <select id="restore-mode-select">
+            <option value="merge" selected>Merge with current data</option>
+            <option value="replace">Replace current Client Finder data</option>
+          </select>
+        </label>
+      </div>
+      <div class="workflow-actions">
+        <button id="restore-local-backup-button" class="secondary-btn" type="button">Import Local Backup</button>
+      </div>
+    </section>
+    <section class="workflow-card">
+      <p class="detail-section-title">Reset Tools</p>
+      <p class="toolbar-subtle">This cannot be undone unless you exported a backup first. Reset tools do not affect API keys, server env vars, or Vercel settings.</p>
+      <div class="workflow-actions">
+        <button class="secondary-btn" type="button" data-clear-local-data="search_cache">Clear Search Results Cache</button>
+        <button class="secondary-btn" type="button" data-clear-local-data="saved_prospects">Clear Saved Prospects</button>
+        <button class="secondary-btn" type="button" data-clear-local-data="clients">Clear Clients</button>
+        <button class="secondary-btn" type="button" data-clear-local-data="saved_lists">Clear Saved Lists</button>
+        <button class="secondary-btn" type="button" data-clear-local-data="all">Clear All Client Finder Local Data</button>
+      </div>
+    </section>
   `;
+
+  bindSettingsDataSafetyActions();
+}
+
+function bindSettingsDataSafetyActions() {
+  elements.resultsContainer.querySelector("#export-local-backup-button")?.addEventListener("click", exportLocalBackup);
+  elements.resultsContainer.querySelector("#import-local-backup-input")?.addEventListener("change", handleBackupFileSelected);
+  elements.resultsContainer.querySelector("#restore-local-backup-button")?.addEventListener("click", importLocalBackup);
+  elements.resultsContainer.querySelectorAll("[data-clear-local-data]").forEach((button) => {
+    button.addEventListener("click", () => clearClientFinderData(button.getAttribute("data-clear-local-data") || ""));
+  });
+}
+
+function getClientFinderLocalStorageKeys() {
+  return CLIENT_FINDER_LOCAL_KEYS.filter((key) => typeof localStorage.getItem(key) === "string");
+}
+
+function getLocalDataSummary(data = null) {
+  const backupData = data || readClientFinderLocalData();
+  const savedProspects = readJsonFromBackupData(backupData, SAVED_COMPANIES_KEY, []);
+  const clients = readJsonFromBackupData(backupData, CLIENTS_KEY, []);
+  const savedLists = readJsonFromBackupData(backupData, SAVED_LISTS_KEY, []);
+  const workflows = readJsonFromBackupData(backupData, PROSPECT_WORKFLOWS_KEY, {});
+  const hidden = readJsonFromBackupData(backupData, HIDDEN_PROSPECTS_KEY, []);
+  return {
+    localDataDetected: Object.keys(backupData).some((key) => key !== STORAGE_MODE_KEY && hasBackupValue(backupData[key])),
+    savedProspectsCount: Array.isArray(savedProspects) ? savedProspects.length : 0,
+    clientsCount: Array.isArray(clients) ? clients.length : 0,
+    savedListsCount: Array.isArray(savedLists) ? savedLists.length : 0,
+    workflowCount: workflows && typeof workflows === "object" && !Array.isArray(workflows) ? Object.keys(workflows).length : 0,
+    hiddenProspectsCount: Array.isArray(hidden) ? hidden.length : 0,
+  };
+}
+
+function getMigrationReadinessStatus(summary = getLocalDataSummary(), status = storageService.getStatus()) {
+  if (!summary.localDataDetected) {
+    return { migrationStatus: "Not Started", note: "No local Client Finder data was detected." };
+  }
+  if (!status.supabaseConfigured) {
+    return { migrationStatus: "Not Started", note: "Local data exists. Configure Supabase before attempting migration." };
+  }
+  if (status.activeMode === "supabase") {
+    return { migrationStatus: "Partial", note: "Supabase mode is enabled for prepared domains. Full migration is not automatic." };
+  }
+  return { migrationStatus: "Ready", note: "Local data exists and Supabase is configured. Export a backup before any migration." };
+}
+
+function readClientFinderLocalData() {
+  return CLIENT_FINDER_LOCAL_KEYS.reduce((data, key) => {
+    const value = localStorage.getItem(key);
+    if (typeof value === "string") {
+      data[key] = value;
+    }
+    return data;
+  }, {});
+}
+
+function exportLocalBackup() {
+  const backup = {
+    app: "Client Finder",
+    schemaVersion: BACKUP_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    storageMode: storageService.getStatus().activeMode,
+    data: readClientFinderLocalData(),
+    summary: getLocalDataSummary(),
+  };
+  downloadBlob(`client-finder-local-backup-${getTodayDateKey()}.json`, JSON.stringify(backup, null, 2), "application/json");
+  elements.statusMessage.textContent = "Local backup exported.";
+}
+
+async function handleBackupFileSelected(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    return;
+  }
+  try {
+    const text = await file.text();
+    const backup = validateBackupJson(text);
+    state.pendingBackup = backup;
+    const summary = getLocalDataSummary(backup.data);
+    const summaryElement = elements.resultsContainer.querySelector("#backup-restore-summary");
+    if (summaryElement) {
+      summaryElement.textContent = `Selected backup from ${backup.exportedAt || "unknown date"}: ${summary.savedProspectsCount} saved prospects, ${summary.clientsCount} clients, ${summary.savedListsCount} lists.`;
+    }
+    elements.statusMessage.textContent = "Backup selected. Review the summary before importing.";
+  } catch (error) {
+    state.pendingBackup = null;
+    elements.statusMessage.textContent = "Invalid backup file. Existing data was not changed.";
+  }
+}
+
+function validateBackupJson(value) {
+  const parsed = typeof value === "string" ? JSON.parse(value) : value;
+  if (!parsed || parsed.app !== "Client Finder" || !parsed.data || typeof parsed.data !== "object") {
+    throw new Error("Invalid Client Finder backup.");
+  }
+  const invalidKey = Object.keys(parsed.data).find((key) => !CLIENT_FINDER_LOCAL_KEYS.includes(key));
+  if (invalidKey) {
+    throw new Error(`Backup contains unsupported key: ${invalidKey}`);
+  }
+  return parsed;
+}
+
+function importLocalBackup() {
+  if (!state.pendingBackup) {
+    elements.statusMessage.textContent = "Choose a valid backup file first.";
+    return;
+  }
+  const mode = elements.resultsContainer.querySelector("#restore-mode-select")?.value || "merge";
+  const summary = getLocalDataSummary(state.pendingBackup.data);
+  const confirmed = window.confirm(
+    `${mode === "replace" ? "Replace" : "Merge"} local Client Finder data from this backup?\n\nSaved prospects: ${summary.savedProspectsCount}\nClients: ${summary.clientsCount}\nLists: ${summary.savedListsCount}`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  if (mode === "replace") {
+    replaceBackupData(state.pendingBackup.data);
+  } else {
+    mergeBackupData(state.pendingBackup.data);
+  }
+  reloadLocalStateFromStorage();
+  state.pendingBackup = null;
+  elements.statusMessage.textContent = "Backup imported successfully.";
+  render();
+}
+
+function mergeBackupData(backupData) {
+  CLIENT_FINDER_LOCAL_KEYS.forEach((key) => {
+    if (typeof backupData[key] !== "string") {
+      return;
+    }
+    const currentValue = localStorage.getItem(key);
+    const merged = mergeLocalStorageValue(key, currentValue, backupData[key]);
+    localStorage.setItem(key, merged);
+  });
+}
+
+function replaceBackupData(backupData) {
+  CLIENT_FINDER_LOCAL_KEYS.forEach((key) => localStorage.removeItem(key));
+  Object.entries(backupData).forEach(([key, value]) => {
+    if (CLIENT_FINDER_LOCAL_KEYS.includes(key) && typeof value === "string") {
+      localStorage.setItem(key, value);
+    }
+  });
+}
+
+function mergeLocalStorageValue(key, currentRaw, backupRaw) {
+  if (key === STORAGE_MODE_KEY) {
+    return currentRaw || backupRaw;
+  }
+  const current = parseJsonSafe(currentRaw, null);
+  const backup = parseJsonSafe(backupRaw, null);
+  if (Array.isArray(current) || Array.isArray(backup)) {
+    return JSON.stringify(mergeArrayByIdentity(Array.isArray(current) ? current : [], Array.isArray(backup) ? backup : []));
+  }
+  if (current && typeof current === "object" && backup && typeof backup === "object") {
+    return JSON.stringify({ ...backup, ...current });
+  }
+  return currentRaw || backupRaw;
+}
+
+function mergeArrayByIdentity(current, backup) {
+  const map = new Map();
+  [...backup, ...current].forEach((item) => {
+    const key = typeof item === "object" && item
+      ? item.id || item.clientId || item.listId || item.requestId || JSON.stringify(item)
+      : String(item);
+    map.set(key, item);
+  });
+  return [...map.values()];
+}
+
+function clearClientFinderData(scope) {
+  const labels = {
+    search_cache: "clear search results cache",
+    saved_prospects: "clear saved prospects",
+    clients: "clear clients",
+    saved_lists: "clear saved lists",
+    all: "clear all Client Finder local data",
+  };
+  if (scope === "all") {
+    const typed = window.prompt("Type DELETE to clear all Client Finder local data. Export a backup first if needed.");
+    if (typed !== "DELETE") {
+      elements.statusMessage.textContent = "Clear all cancelled.";
+      return;
+    }
+  } else if (!window.confirm(`Confirm ${labels[scope] || "clear data"}? This cannot be undone unless you exported a backup first.`)) {
+    return;
+  }
+
+  const keysByScope = {
+    search_cache: [MANUAL_PROSPECTS_KEY, SCAN_QUEUE_KEY],
+    saved_prospects: [SAVED_COMPANIES_KEY, PROSPECT_WORKFLOWS_KEY, HIDDEN_PROSPECTS_KEY],
+    clients: [CLIENTS_KEY],
+    saved_lists: [SAVED_LISTS_KEY],
+    all: CLIENT_FINDER_LOCAL_KEYS,
+  };
+  (keysByScope[scope] || []).forEach((key) => localStorage.removeItem(key));
+  reloadLocalStateFromStorage();
+  elements.statusMessage.textContent = `${titleCase(labels[scope] || "data cleared")}.`;
+  render();
+}
+
+function reloadLocalStateFromStorage() {
+  state.savedSearches = loadSavedSearches();
+  state.savedLists = loadSavedLists();
+  state.savedCompanies = loadSavedCompanies();
+  state.clients = getClients();
+  state.hiddenProspects = loadHiddenProspects();
+  state.prospectWorkflows = loadProspectWorkflows();
+  state.manualProspects = loadManualProspects();
+  state.senderProfile = loadSenderProfile();
+  state.companies = augmentCompaniesWithScannerData(mergeManualProspects(state.companies, state.manualProspects));
+  state.currentPage = 1;
+  resetClientSyncSnapshot();
+  renderSavedSearches();
+  applyFilters();
+}
+
+function readJsonFromBackupData(data, key, fallbackValue) {
+  return parseJsonSafe(data?.[key], fallbackValue);
+}
+
+function parseJsonSafe(value, fallbackValue) {
+  try {
+    return typeof value === "string" ? JSON.parse(value) : value ?? fallbackValue;
+  } catch {
+    return fallbackValue;
+  }
+}
+
+function hasBackupValue(rawValue) {
+  const value = parseJsonSafe(rawValue, rawValue);
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value).length > 0;
+  return Boolean(String(value || "").trim());
 }
 
 function renderEmptyState() {
@@ -8676,8 +8976,8 @@ function downloadFile(url) {
   link.remove();
 }
 
-function downloadBlob(filename, content) {
-  const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
+function downloadBlob(filename, content, contentType = "text/csv;charset=utf-8;") {
+  const blob = new Blob([content], { type: contentType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
