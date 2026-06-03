@@ -61,6 +61,21 @@ const PROSPECT_STAGES = [
   "Lost",
   "Archived",
 ];
+const PIPELINE_STAGE_GROUPS = [
+  { label: "New / Saved", stages: ["New Lead", "Saved"] },
+  { label: "Contacted", stages: ["Outreach Started"] },
+  { label: "Follow-Up Needed", matcher: (company) => ["overdue", "due_today"].includes(getFollowUpState(company.next_follow_up)) },
+  { label: "Responded", stages: ["Engaged"] },
+  { label: "Meeting Scheduled", stages: ["Meeting Done"] },
+  { label: "Requirements Received", stages: ["Requirements Discussed"] },
+  { label: "Quote Drafting", stages: ["Quote Requested", "Negotiation"] },
+  { label: "Quote Sent", stages: ["Quote Sent"] },
+  { label: "Quote Accepted", matcher: (company) => String(company.quote_status || "") === "Accepted" },
+  { label: "Contract Expected", stages: ["Contract Expected", "Contract Received"] },
+  { label: "Client Converted", stages: ["Client Onboarding"] },
+  { label: "Lost / Not Interested", stages: ["Lost", "Archived"] },
+  { label: "Follow Up Later", matcher: (company) => getFollowUpState(company.next_follow_up) === "upcoming" },
+];
 const QUOTE_STATUSES = ["Not Started", "Quote Requested", "Drafting", "Sent", "Under Review", "Accepted", "Rejected"];
 const CLIENT_PROJECT_STATUSES = [
   "Client Onboarding",
@@ -406,7 +421,7 @@ const state = {
   currentPage: 1,
   pageSize: 20,
   viewMode: "list",
-  activeView: "discovery",
+  activeView: "dashboard",
   loading: false,
   sortBy: "best_match",
   activeDetailTab: "overview",
@@ -415,6 +430,7 @@ const state = {
   savedSearches: loadSavedSearches(),
   savedLists: loadSavedLists(),
   selectedListId: "",
+  pipelineFilters: {},
   pendingBackup: null,
   savedCompanies: loadSavedCompanies(),
   clients: getClients(),
@@ -1327,50 +1343,72 @@ function paginate() {
 }
 
 function render() {
+  const isDashboardView = state.activeView === "dashboard";
   const isSavedView = state.activeView === "saved";
+  const isPipelineView = state.activeView === "pipeline";
   const isClientsView = state.activeView === "clients";
   const isListsView = state.activeView === "lists";
   const isFollowupsView = state.activeView === "followups";
   const isSettingsView = state.activeView === "settings";
-  const visibleCount = isClientsView
-    ? state.clients.length
-    : isListsView
-      ? state.savedLists.length
-      : isFollowupsView
-        ? getFollowUpDueProspects().length
-        : isSettingsView
-          ? 1
-          : state.filteredCompanies.length;
+  const visibleCount = isDashboardView
+    ? getTodaysActions().length
+    : isPipelineView
+      ? getFilteredPipelineProspects().length
+      : isClientsView
+        ? state.clients.length
+        : isListsView
+          ? state.savedLists.length
+          : isFollowupsView
+            ? getActionCenterItems().length
+            : isSettingsView
+              ? 1
+              : state.filteredCompanies.length;
   elements.resultCount.textContent = String(visibleCount);
   elements.resultsSubtitle.textContent = buildResultsSubtitle();
-  elements.resultsTitle.textContent = isClientsView
-    ? "Clients"
-    : isListsView
-      ? "Saved Lists"
-      : isFollowupsView
-        ? "Follow-Ups"
-        : isSettingsView
-          ? "Settings"
-          : isSavedView
-            ? "Saved Prospects"
-            : "Search Results";
+  elements.resultsTitle.textContent = isDashboardView
+    ? "Dashboard"
+    : isPipelineView
+      ? "Pipeline"
+      : isClientsView
+        ? "Clients"
+        : isListsView
+          ? "Saved Lists"
+          : isFollowupsView
+            ? "Action Center"
+            : isSettingsView
+              ? "Settings"
+              : isSavedView
+                ? "Saved Prospects"
+                : "Search Results";
   elements.workflowDashboard.classList.toggle("hidden", !isSavedView);
   elements.savedWorkqueueFilters?.classList.toggle("hidden", !isSavedView);
   renderEmptyState();
-  elements.emptyState.classList.toggle("hidden", isListsView || isSettingsView || visibleCount > 0 || state.loading);
-  elements.resultsContainer.classList.toggle("hidden", !(isListsView || isSettingsView) && visibleCount === 0);
+  elements.emptyState.classList.toggle(
+    "hidden",
+    isDashboardView || isPipelineView || isFollowupsView || isListsView || isSettingsView || visibleCount > 0 || state.loading
+  );
+  elements.resultsContainer.classList.toggle(
+    "hidden",
+    !(isDashboardView || isPipelineView || isFollowupsView || isListsView || isSettingsView) && visibleCount === 0
+  );
   elements.loadingState.classList.toggle("hidden", !state.loading);
-  elements.pageIndicator.textContent = isClientsView
-    ? "Clients"
-    : isListsView
-      ? "Lists"
-      : isFollowupsView
-        ? "Follow-Ups"
-        : isSettingsView
-          ? "Settings"
-          : `Page ${state.currentPage} of ${getTotalPages()}`;
-  elements.prevPageButton.disabled = isClientsView || isListsView || isFollowupsView || isSettingsView || state.currentPage <= 1;
-  elements.nextPageButton.disabled = isClientsView || isListsView || isFollowupsView || isSettingsView || state.currentPage >= getTotalPages();
+  elements.pageIndicator.textContent = isDashboardView
+    ? "Dashboard"
+    : isPipelineView
+      ? "Pipeline"
+      : isClientsView
+        ? "Clients"
+        : isListsView
+          ? "Lists"
+          : isFollowupsView
+            ? "Action Center"
+            : isSettingsView
+              ? "Settings"
+              : `Page ${state.currentPage} of ${getTotalPages()}`;
+  elements.prevPageButton.disabled =
+    isDashboardView || isPipelineView || isClientsView || isListsView || isFollowupsView || isSettingsView || state.currentPage <= 1;
+  elements.nextPageButton.disabled =
+    isDashboardView || isPipelineView || isClientsView || isListsView || isFollowupsView || isSettingsView || state.currentPage >= getTotalPages();
   elements.listViewButton?.classList.toggle("active", state.viewMode === "list");
   elements.gridViewButton?.classList.toggle("active", state.viewMode === "grid");
   elements.scanVisibleButton.disabled =
@@ -1381,7 +1419,11 @@ function render() {
   elements.cancelQueueButton.disabled =
     (!state.bulkScan.running && !state.bulkScan.paused) || !state.bulkScan.queue.length;
 
-  if (isClientsView) {
+  if (isDashboardView) {
+    renderDashboardView();
+  } else if (isPipelineView) {
+    renderPipelineView();
+  } else if (isClientsView) {
     renderClientsView();
   } else if (isListsView) {
     renderSavedListsView();
@@ -1526,6 +1568,251 @@ async function syncLocalClientsToSupabase() {
   }
 }
 
+function renderDashboardView() {
+  const metrics = getDashboardMetrics();
+  const todaysActions = getTodaysActions().slice(0, 8);
+  const pipelineSummary = getPipelineSummary();
+  const deliveryHealth = getClientDeliveryHealth();
+  const recentActivity = getRecentActivity().slice(0, 10);
+
+  elements.resultsContainer.className = "results-container list-view";
+  elements.resultsContainer.innerHTML = `
+    <section class="dashboard-metric-grid">
+      ${[
+        ["Total Saved Prospects", metrics.totalSavedProspects],
+        ["High Priority Prospects", metrics.highPriorityProspects],
+        ["Follow-Ups Due Today", metrics.followUpsDueToday],
+        ["Overdue Follow-Ups", metrics.overdueFollowUps],
+        ["Quotes Sent", metrics.quotesSent],
+        ["Quotes Accepted", metrics.quotesAccepted],
+        ["Active Clients", metrics.activeClients],
+        ["Blocked Clients", metrics.blockedClients],
+        ["Payments Due / Balance Due", `${metrics.paymentsDue} / ${formatMoneyValue(metrics.balanceDue) || "$0"}`],
+        ["Support Requests Open", metrics.supportRequestsOpen],
+      ]
+        .map(
+          ([label, value]) => `
+            <div class="overview-card">
+              <span class="overview-label">${escapeHtml(label)}</span>
+              <strong>${escapeHtml(String(value))}</strong>
+            </div>
+          `
+        )
+        .join("")}
+    </section>
+
+    <section class="dashboard-section-grid">
+      <article class="workflow-card">
+        <div class="workflow-header-row">
+          <div>
+            <p class="detail-section-title">Today's Actions</p>
+            <p class="toolbar-subtle">Highest-priority work across prospects, clients, and support.</p>
+          </div>
+          <button class="secondary-btn" type="button" data-dashboard-view="followups">Open Action Center</button>
+        </div>
+        <div class="action-list">
+          ${todaysActions.length ? todaysActions.map(renderActionItem).join("") : `<div class="na-panel">No urgent actions for today.</div>`}
+        </div>
+      </article>
+
+      <article class="workflow-card">
+        <div class="workflow-header-row">
+          <div>
+            <p class="detail-section-title">Pipeline Summary</p>
+            <p class="toolbar-subtle">Saved prospects by current stage.</p>
+          </div>
+          <button class="secondary-btn" type="button" data-dashboard-view="pipeline">Open Pipeline</button>
+        </div>
+        <div class="pipeline-summary-grid">
+          ${pipelineSummary
+            .map(
+              (item) => `
+                <div class="pipeline-summary-item">
+                  <span>${escapeHtml(item.label)}</span>
+                  <strong>${escapeHtml(String(item.count))}</strong>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      </article>
+
+      <article class="workflow-card">
+        <p class="detail-section-title">Client Delivery Health</p>
+        <div class="overview-grid">
+          ${[
+            ["Active clients", deliveryHealth.activeClients],
+            ["Blocked clients", deliveryHealth.blockedClients],
+            ["In onboarding", deliveryHealth.onboarding],
+            ["In development", deliveryHealth.development],
+            ["Awaiting approval", deliveryHealth.awaitingApproval],
+            ["In handover", deliveryHealth.handover],
+            ["Support active", deliveryHealth.supportActive],
+          ]
+            .map(
+              ([label, value]) => `
+                <div class="overview-card">
+                  <span class="overview-label">${escapeHtml(label)}</span>
+                  <strong>${escapeHtml(String(value))}</strong>
+                </div>
+              `
+            )
+            .join("")}
+        </div>
+      </article>
+
+      <article class="workflow-card">
+        <p class="detail-section-title">Recent Activity</p>
+        <div class="activity-list">
+          ${
+            recentActivity.length
+              ? recentActivity
+                  .map(
+                    (entry) => `
+                      <div class="activity-item">
+                        <span class="activity-dot"></span>
+                        <div>
+                          <strong>${escapeHtml(entry.name)}</strong>
+                          <p>${escapeHtml(entry.message)}</p>
+                          <small>${escapeHtml(entry.source)} - ${escapeHtml(formatDateOnly(entry.date))}</small>
+                        </div>
+                      </div>
+                    `
+                  )
+                  .join("")
+              : `<div class="na-panel">No recent activity yet.</div>`
+          }
+        </div>
+      </article>
+    </section>
+  `;
+
+  bindActionCenterButtons(elements.resultsContainer);
+  elements.resultsContainer.querySelectorAll("[data-dashboard-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeView = button.getAttribute("data-dashboard-view") || "dashboard";
+      render();
+    });
+  });
+}
+
+function renderPipelineView() {
+  const prospects = getFilteredPipelineProspects();
+  const grouped = groupProspectsByStage(prospects);
+  elements.resultsContainer.className = "results-container list-view";
+  elements.resultsContainer.innerHTML = `
+    <section class="workflow-card">
+      <div class="workflow-header-row">
+        <div>
+          <p class="detail-section-title">Prospect Pipeline</p>
+          <p class="toolbar-subtle">Saved prospects grouped by current stage. Update stage directly from a card when progress changes.</p>
+        </div>
+      </div>
+      ${renderPipelineFilters()}
+    </section>
+    <section class="pipeline-board">
+      ${grouped
+        .map(
+          (group) => `
+            <article class="pipeline-column">
+              <div class="pipeline-column-header">
+                <strong>${escapeHtml(group.label)}</strong>
+                <span class="stage-chip">${escapeHtml(String(group.prospects.length))}</span>
+              </div>
+              <div class="pipeline-card-list">
+                ${group.prospects.length ? group.prospects.map(renderPipelineCard).join("") : `<div class="na-panel">No prospects in this stage.</div>`}
+              </div>
+            </article>
+          `
+        )
+        .join("")}
+    </section>
+  `;
+
+  bindPipelineActions();
+}
+
+function renderPipelineFilters() {
+  const activeFilters = getActiveFilters();
+  const businessTypes = getSavedBusinessTypes();
+  const filters = state.pipelineFilters || {};
+  return `
+    <div class="saved-workqueue-filters pipeline-filters">
+      <label class="inline-field"><span>Search Mode</span><select data-pipeline-filter="searchMode">
+        <option value="">All modes</option>
+        ${Object.values(SEARCH_MODES)
+          .map((mode) => `<option value="${escapeAttribute(mode.label)}" ${filters.searchMode === mode.label ? "selected" : ""}>${escapeHtml(mode.label)}</option>`)
+          .join("")}
+      </select></label>
+      <label class="inline-field"><span>Business Type</span><select data-pipeline-filter="businessType">
+        <option value="">All types</option>
+        ${businessTypes.map((type) => `<option value="${escapeAttribute(type)}" ${filters.businessType === type ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
+      </select></label>
+      <label class="inline-field"><span>City / State</span><input data-pipeline-filter="location" type="search" value="${escapeAttribute(filters.location || "")}" placeholder="${escapeAttribute([activeFilters.cityLabel, activeFilters.state].filter(Boolean).join(", ") || "Any location")}" /></label>
+      <label class="inline-field"><span>Opportunity Priority</span><select data-pipeline-filter="priority">
+        <option value="">All priorities</option>
+        ${["High Priority", "Good Fit", "Needs Review", "Not Recommended"].map(
+          (priority) => `<option value="${escapeAttribute(priority)}" ${filters.priority === priority ? "selected" : ""}>${escapeHtml(priority)}</option>`
+        ).join("")}
+      </select></label>
+      <label class="inline-field"><span>Follow-Up Status</span><select data-pipeline-filter="followUp">
+        <option value="">All follow-ups</option>
+        ${[
+          ["overdue", "Overdue"],
+          ["due_today", "Due today"],
+          ["upcoming_week", "Upcoming this week"],
+          ["none", "No follow-up set"],
+        ].map(([value, label]) => `<option value="${escapeAttribute(value)}" ${filters.followUp === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}
+      </select></label>
+      <label class="inline-field"><span>Quote Status</span><select data-pipeline-filter="quoteStatus">
+        <option value="">All quotes</option>
+        ${QUOTE_STATUSES.map((status) => `<option value="${escapeAttribute(status)}" ${filters.quoteStatus === status ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}
+      </select></label>
+      <label class="inline-field"><span>Saved List</span><select data-pipeline-filter="listId">
+        <option value="">All lists</option>
+        ${state.savedLists
+          .map(
+            (list) =>
+              `<option value="${escapeAttribute(list.listId)}" ${filters.listId === list.listId ? "selected" : ""}>${escapeHtml(list.listName)}</option>`
+          )
+          .join("")}
+      </select></label>
+    </div>
+  `;
+}
+
+function renderPipelineCard(company) {
+  const latestActivity = getLatestProspectActivity(company);
+  const ready = getConvertReadiness(company);
+  return `
+    <article class="pipeline-card ${ready.ready ? "ready" : ""}">
+      <div>
+        <strong>${escapeHtml(company.name || "NA")}</strong>
+        <p class="toolbar-subtle">${escapeHtml(company.industry || company.keyword || "Business")} - ${escapeHtml([company.city, company.state].filter(Boolean).join(", ") || "No location")}</p>
+      </div>
+      <div class="pipeline-card-meta">
+        <span class="stage-chip">${escapeHtml(company.opportunityPriority || company.lead_label || "Needs Review")}</span>
+        <span>${escapeHtml(company.next_follow_up || "No follow-up")}</span>
+        <span>${escapeHtml(company.quote_status || "Quote not started")}</span>
+        <span>${escapeHtml(latestActivity.message || "No activity yet")}</span>
+      </div>
+      ${ready.ready ? `<p class="workflow-note">${escapeHtml(ready.reason)}</p>` : ""}
+      <label class="inline-field">
+        <span>Current Stage</span>
+        <select data-pipeline-stage="${escapeAttribute(company.id)}">
+          ${PROSPECT_STAGES.map(
+            (stage) => `<option value="${escapeAttribute(stage)}" ${normalizeProspectStage(company.prospect_stage) === stage ? "selected" : ""}>${escapeHtml(stage)}</option>`
+          ).join("")}
+        </select>
+      </label>
+      <div class="workflow-actions">
+        <button class="secondary-btn" type="button" data-open-pipeline-prospect="${escapeAttribute(company.id)}">Open</button>
+        ${ready.ready ? `<button class="primary-btn" type="button" data-open-pipeline-prospect="${escapeAttribute(company.id)}">Review Conversion</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
 function renderClientsView() {
   const clients = [...state.clients].sort((left, right) =>
     String(right.createdAt || "").localeCompare(String(left.createdAt || ""))
@@ -1554,31 +1841,39 @@ function renderClientsView() {
 }
 
 function renderFollowUpsView() {
-  const dueProspects = getFollowUpDueProspects();
-  const upcomingProspects = getSavedProspectCompanies().filter((company) => isUpcomingThisWeek(company.next_follow_up));
-  const rows = [...dueProspects, ...upcomingProspects]
-    .filter((company, index, list) => list.findIndex((item) => item.id === company.id) === index)
-    .sort((left, right) => String(left.next_follow_up || "").localeCompare(String(right.next_follow_up || "")));
-
-  elements.resultsContainer.innerHTML = rows.length
-    ? `
-      <div class="prospect-list-shell">
-        <div class="prospect-list-head">
-          <span>Saved Prospect</span>
-          <span>Current Stage</span>
-          <span>Next Follow-Up</span>
-          <span>Actions</span>
-        </div>
-        <div class="prospect-list">
-          ${rows.map((company) => renderFollowUpRow(company)).join("")}
+  const groups = getActionCenterGroups();
+  elements.resultsContainer.className = "results-container list-view";
+  elements.resultsContainer.innerHTML = `
+    <section class="workflow-card">
+      <div class="workflow-header-row">
+        <div>
+          <p class="detail-section-title">Daily Action Center</p>
+          <p class="toolbar-subtle">Open this page each day to handle follow-ups, quotes, client blockers, missing info, and support requests.</p>
         </div>
       </div>
-    `
-    : `<div class="na-panel">No follow-ups are due. Set a next follow-up from a saved prospect activity or process tab.</div>`;
+    </section>
+    <section class="action-center-grid">
+      ${groups
+        .map(
+          (group) => `
+            <article class="workflow-card action-group-card">
+              <div class="workflow-header-row">
+                <div>
+                  <p class="detail-section-title">${escapeHtml(group.label)}</p>
+                  <p class="toolbar-subtle">${escapeHtml(String(group.items.length))} item${group.items.length === 1 ? "" : "s"}</p>
+                </div>
+              </div>
+              <div class="action-list">
+                ${group.items.length ? group.items.map(renderActionItem).join("") : `<div class="na-panel">No items.</div>`}
+              </div>
+            </article>
+          `
+        )
+        .join("")}
+    </section>
+  `;
 
-  elements.resultsContainer.querySelectorAll("[data-open-followup]").forEach((button) => {
-    button.addEventListener("click", () => openDetails(button.getAttribute("data-open-followup")));
-  });
+  bindActionCenterButtons(elements.resultsContainer);
 }
 
 function renderFollowUpRow(company) {
@@ -1603,6 +1898,426 @@ function renderFollowUpRow(company) {
       </div>
     </article>
   `;
+}
+
+function renderActionItem(item) {
+  return `
+    <article class="action-item ${escapeAttribute(item.severity || "")}">
+      <div class="action-main">
+        <strong>${escapeHtml(item.name || "NA")}</strong>
+        <span>${escapeHtml(item.actionNeeded || item.type || "Review")}</span>
+        <small>${escapeHtml([item.priority, item.dueLabel, item.lastActivity].filter(Boolean).join(" - ") || "No extra details")}</small>
+        <p>${escapeHtml(item.suggestedAction || "Open the record and review next steps.")}</p>
+      </div>
+      <div class="workflow-actions action-buttons">
+        ${item.kind === "prospect" ? `<button class="secondary-btn" type="button" data-open-action-prospect="${escapeAttribute(item.id)}">Open Prospect</button>` : ""}
+        ${item.kind === "client" ? `<button class="secondary-btn" type="button" data-open-action-client="${escapeAttribute(item.id)}">Open Client</button>` : ""}
+        ${
+          item.allowFollowedUp
+            ? `<button class="secondary-btn" type="button" data-mark-followed-up="${escapeAttribute(item.id)}">Mark Followed Up</button>`
+            : ""
+        }
+        ${
+          item.kind === "prospect"
+            ? `<button class="secondary-btn" type="button" data-set-action-followup="${escapeAttribute(item.id)}">Set New Follow-Up</button>
+               <button class="secondary-btn" type="button" data-copy-action-outreach="${escapeAttribute(item.id)}">Copy Outreach</button>`
+            : ""
+        }
+      </div>
+    </article>
+  `;
+}
+
+function bindActionCenterButtons(container) {
+  container.querySelectorAll("[data-open-action-prospect]").forEach((button) => {
+    button.addEventListener("click", () => openDetails(button.getAttribute("data-open-action-prospect")));
+  });
+  container.querySelectorAll("[data-open-action-client]").forEach((button) => {
+    button.addEventListener("click", () => openClientProfile(button.getAttribute("data-open-action-client")));
+  });
+  container.querySelectorAll("[data-mark-followed-up]").forEach((button) => {
+    button.addEventListener("click", () => markActionFollowedUp(button.getAttribute("data-mark-followed-up")));
+  });
+  container.querySelectorAll("[data-set-action-followup]").forEach((button) => {
+    button.addEventListener("click", () => promptForNewFollowUp(button.getAttribute("data-set-action-followup")));
+  });
+  container.querySelectorAll("[data-copy-action-outreach]").forEach((button) => {
+    button.addEventListener("click", () => copyDefaultActionOutreach(button.getAttribute("data-copy-action-outreach")));
+  });
+}
+
+function bindPipelineActions() {
+  elements.resultsContainer.querySelectorAll("[data-open-pipeline-prospect]").forEach((button) => {
+    button.addEventListener("click", () => openDetails(button.getAttribute("data-open-pipeline-prospect")));
+  });
+  elements.resultsContainer.querySelectorAll("[data-pipeline-stage]").forEach((select) => {
+    select.addEventListener("change", () => updateProspectStage(select.getAttribute("data-pipeline-stage"), select.value, "Pipeline"));
+  });
+  elements.resultsContainer.querySelectorAll("[data-pipeline-filter]").forEach((field) => {
+    field.addEventListener(field.tagName === "INPUT" ? "input" : "change", () => {
+      state.pipelineFilters = {
+        ...(state.pipelineFilters || {}),
+        [field.getAttribute("data-pipeline-filter")]: field.value || "",
+      };
+      render();
+    });
+  });
+}
+
+function getDashboardMetrics() {
+  const savedProspects = getSavedProspectCompanies();
+  const paymentSummaries = state.clients.map((client) => {
+    const summary = normalizePaymentSummary(client.paymentSummary, client);
+    const totals = calculatePaymentTotals(summary, normalizePaymentRecords(client.paymentRecords));
+    return { status: summary.paymentStatus || suggestPaymentStatus(summary, totals), balanceDue: totals.balanceDue };
+  });
+  return {
+    totalSavedProspects: savedProspects.length,
+    highPriorityProspects: savedProspects.filter((company) => isHighPriorityProspect(company)).length,
+    followUpsDueToday: savedProspects.filter((company) => getFollowUpState(company.next_follow_up) === "due_today").length,
+    overdueFollowUps: savedProspects.filter((company) => getFollowUpState(company.next_follow_up) === "overdue").length,
+    quotesSent: savedProspects.filter((company) => ["Sent", "Under Review"].includes(company.quote_status) || company.prospect_stage === "Quote Sent").length,
+    quotesAccepted: savedProspects.filter((company) => company.quote_status === "Accepted").length,
+    activeClients: state.clients.filter((client) => !["Completed", "Cancelled", "Archived"].includes(client.currentClientStatus)).length,
+    blockedClients: state.clients.filter((client) => client.projectStatus === "Blocked" || client.currentClientStatus === "Blocked").length,
+    paymentsDue: paymentSummaries.filter((payment) => payment.balanceDue > 0 && payment.status !== "Paid").length,
+    balanceDue: paymentSummaries.reduce((sum, payment) => sum + payment.balanceDue, 0),
+    supportRequestsOpen: state.clients.reduce(
+      (sum, client) => sum + normalizeSupportRequests(client.supportRequests).filter((request) => !["Completed", "Cancelled"].includes(request.status)).length,
+      0
+    ),
+  };
+}
+
+function getTodaysActions() {
+  return getActionCenterItems()
+    .filter((item) => ["Overdue", "Due Today", "Quotes to Follow Up", "Client Blockers", "Open Support Requests", "Missing Client Info"].includes(item.category))
+    .sort(compareActionItems);
+}
+
+function getActionCenterGroups() {
+  const items = getActionCenterItems();
+  return [
+    "Overdue",
+    "Due Today",
+    "Upcoming This Week",
+    "Quotes to Follow Up",
+    "Client Blockers",
+    "Missing Client Info",
+    "Open Support Requests",
+    "No Follow-Up Set",
+  ].map((label) => ({ label, items: items.filter((item) => item.category === label).sort(compareActionItems) }));
+}
+
+function getActionCenterItems() {
+  return [...getSavedProspectCompanies().flatMap(getProspectActionItems), ...state.clients.flatMap(getClientActionItems)];
+}
+
+function getProspectActionItems(company) {
+  const items = [];
+  const followUpState = getFollowUpState(company.next_follow_up);
+  const latestActivity = getLatestProspectActivity(company);
+  const base = {
+    kind: "prospect",
+    id: company.id,
+    name: company.name || "Prospect",
+    priority: company.follow_up_priority || company.opportunityPriority || company.lead_label || "Normal",
+    lastActivity: latestActivity.message ? `Last: ${latestActivity.message}` : "No activity yet",
+    allowFollowedUp: true,
+  };
+  if (followUpState === "overdue" || followUpState === "due_today" || isUpcomingThisWeek(company.next_follow_up)) {
+    items.push({
+      ...base,
+      category: followUpState === "overdue" ? "Overdue" : followUpState === "due_today" ? "Due Today" : "Upcoming This Week",
+      type: "Follow-Up",
+      dueLabel: company.next_follow_up || "Not scheduled",
+      actionNeeded: followUpState === "overdue" ? "Follow-up overdue" : followUpState === "due_today" ? "Follow-up due today" : "Follow-up this week",
+      suggestedAction: company.next_action || getSuggestedPipelineAction(company),
+      severity: followUpState === "overdue" ? "high" : "normal",
+    });
+  }
+  if (["Sent", "Under Review"].includes(company.quote_status) || company.prospect_stage === "Quote Sent") {
+    items.push({
+      ...base,
+      category: "Quotes to Follow Up",
+      type: "Quote",
+      dueLabel: company.quote_follow_up_date || company.next_follow_up || "No quote follow-up date",
+      actionNeeded: "Quote needs follow-up",
+      suggestedAction: "Ask about decision timing and any remaining scope questions.",
+      severity: "normal",
+    });
+  }
+  if (followUpState === "none" && !["Lost", "Archived", "Client Onboarding"].includes(normalizeProspectStage(company.prospect_stage))) {
+    items.push({
+      ...base,
+      category: "No Follow-Up Set",
+      type: "Queue Cleanup",
+      dueLabel: "No date",
+      actionNeeded: "No follow-up set",
+      suggestedAction: "Set a follow-up date or move the prospect to Lost / Not Interested.",
+      allowFollowedUp: false,
+      severity: "low",
+    });
+  }
+  return items;
+}
+
+function getClientActionItems(client) {
+  const items = [];
+  const missingInfo = getMissingClientInfo(client);
+  const base = {
+    kind: "client",
+    id: client.clientId,
+    name: client.businessName || "Client",
+    priority: client.projectStatus === "Blocked" ? "High" : "Normal",
+    lastActivity: getLatestClientActivity(client).message || "No activity yet",
+    allowFollowedUp: false,
+  };
+  if (client.projectStatus === "Blocked" || client.currentClientStatus === "Blocked") {
+    items.push({
+      ...base,
+      category: "Client Blockers",
+      type: "Client",
+      dueLabel: client.nextProjectAction || client.projectStatus || "Blocked",
+      actionNeeded: "Client blocker",
+      suggestedAction: client.nextProjectAction || "Open the client profile and resolve the blocker.",
+      severity: "high",
+    });
+  }
+  if (missingInfo.length) {
+    items.push({
+      ...base,
+      category: "Missing Client Info",
+      type: "Client Info",
+      dueLabel: `${missingInfo.length} missing`,
+      actionNeeded: "Missing critical client info",
+      suggestedAction: `Collect: ${missingInfo.slice(0, 3).join(", ")}${missingInfo.length > 3 ? "..." : ""}`,
+      severity: "normal",
+    });
+  }
+  normalizeSupportRequests(client.supportRequests)
+    .filter((request) => !["Completed", "Cancelled"].includes(request.status) && ["High", "Urgent"].includes(request.priority))
+    .forEach((request) => {
+      items.push({
+        ...base,
+        category: "Open Support Requests",
+        type: "Support",
+        priority: request.priority,
+        dueLabel: request.targetDate || request.status,
+        actionNeeded: request.title || "Open support request",
+        suggestedAction: request.notes || "Review and update the support request.",
+        severity: request.priority === "Urgent" ? "high" : "normal",
+      });
+    });
+  return items;
+}
+
+function compareActionItems(left, right) {
+  return getActionPriorityRank(right) - getActionPriorityRank(left) || String(left.dueLabel || "").localeCompare(String(right.dueLabel || ""));
+}
+
+function getActionPriorityRank(item) {
+  if (item.category === "Overdue" || item.severity === "high") return 4;
+  if (item.category === "Due Today") return 3;
+  if (["High Priority", "High", "Urgent"].includes(item.priority)) return 2;
+  return 1;
+}
+
+function getPipelineSummary() {
+  return groupProspectsByStage(getSavedProspectCompanies()).map((group) => ({ label: group.label, count: group.prospects.length }));
+}
+
+function getPipelineStages() {
+  return PIPELINE_STAGE_GROUPS;
+}
+
+function groupProspectsByStage(prospects) {
+  const assigned = new Set();
+  return getPipelineStages().map((group) => {
+    const groupProspects = prospects.filter((company) => {
+      if (assigned.has(company.id) || !matchesPipelineStageGroup(company, group)) return false;
+      assigned.add(company.id);
+      return true;
+    });
+    return { label: group.label, prospects: groupProspects };
+  });
+}
+
+function matchesPipelineStageGroup(company, group) {
+  if (typeof group.matcher === "function" && group.matcher(company)) return true;
+  return Array.isArray(group.stages) && group.stages.includes(normalizeProspectStage(company.prospect_stage || company.stage));
+}
+
+function getFilteredPipelineProspects() {
+  const filters = state.pipelineFilters || {};
+  let prospects = getSavedProspectCompanies();
+  if (filters.listId) {
+    const ids = new Set(state.savedLists.find((item) => item.listId === filters.listId)?.prospectIds || []);
+    prospects = prospects.filter((company) => ids.has(company.id));
+  }
+  if (filters.searchMode) prospects = prospects.filter((company) => (company.searchMode || company.recordPurpose || "") === filters.searchMode);
+  if (filters.businessType) prospects = prospects.filter((company) => [company.keyword, company.businessType, company.industry].includes(filters.businessType));
+  if (filters.location) {
+    const query = normalizeText(filters.location);
+    prospects = prospects.filter((company) => normalizeText([company.city, company.state, company.address].filter(Boolean).join(" ")).includes(query));
+  }
+  if (filters.priority) prospects = prospects.filter((company) => (company.opportunityPriority || company.lead_label || "") === filters.priority);
+  if (filters.followUp) prospects = prospects.filter((company) => matchesSavedFollowUpFilter(company.next_follow_up, filters.followUp));
+  if (filters.quoteStatus) prospects = prospects.filter((company) => (company.quote_status || "Not Started") === filters.quoteStatus);
+  return prospects;
+}
+
+function getClientDeliveryHealth() {
+  return {
+    activeClients: state.clients.filter((client) => !["Completed", "Cancelled", "Archived"].includes(client.currentClientStatus)).length,
+    blockedClients: state.clients.filter((client) => client.projectStatus === "Blocked" || client.currentClientStatus === "Blocked").length,
+    onboarding: state.clients.filter((client) => client.projectStatus === "Client Onboarding").length,
+    development: state.clients.filter((client) => ["Design", "Development", "Content Collection", "Discovery"].includes(client.projectStatus)).length,
+    awaitingApproval: state.clients.filter((client) => ["Review", "Awaiting Approval"].includes(client.projectStatus)).length,
+    handover: state.clients.filter((client) => ["Handover", "Launch"].includes(client.projectStatus) || client.handoverStatus === "Preparing").length,
+    supportActive: state.clients.filter((client) => normalizeSupportPlan(client.supportPlan, client).supportStatus === "Active").length,
+  };
+}
+
+function getRecentActivity() {
+  const prospectActivity = getSavedProspectCompanies().flatMap((company) =>
+    (Array.isArray(company.activity_log) ? company.activity_log : []).map((entry) => ({
+      name: company.name || "Prospect",
+      message: entry.message || entry.activity_type || "Updated",
+      source: entry.source || "Prospect",
+      date: entry.created_at || entry.createdAt || "",
+    }))
+  );
+  const clientActivity = state.clients.flatMap((client) =>
+    (Array.isArray(client.activity) ? client.activity : []).map((entry) => ({
+      name: client.businessName || "Client",
+      message: entry.message || "Updated",
+      source: entry.source || "Client",
+      date: entry.createdAt || entry.created_at || "",
+    }))
+  );
+  return [...prospectActivity, ...clientActivity].filter((entry) => entry.message).sort((left, right) => String(right.date || "").localeCompare(String(left.date || "")));
+}
+
+function getLatestProspectActivity(company) {
+  const latest = Array.isArray(company.activity_log) ? company.activity_log[0] || {} : {};
+  return { message: latest.message || latest.activity_type || "", date: latest.created_at || latest.createdAt || "" };
+}
+
+function getLatestClientActivity(client) {
+  const latest = Array.isArray(client.activity) ? client.activity[0] || {} : {};
+  return { message: latest.message || "", date: latest.createdAt || latest.created_at || "" };
+}
+
+function getSavedBusinessTypes() {
+  return [
+    ...new Set(
+      getSavedProspectCompanies()
+        .flatMap((company) => [company.keyword, company.businessType, company.industry])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    ),
+  ].sort((left, right) => left.localeCompare(right));
+}
+
+function isHighPriorityProspect(company) {
+  return ["High Priority", "High", "Urgent"].includes(company.opportunityPriority || company.lead_label || company.follow_up_priority);
+}
+
+function getConvertReadiness(company) {
+  if (!isProspectEligibleForClientConversion(company)) return { ready: false, reason: "" };
+  if (String(company.quote_status || "") === "Accepted") return { ready: true, reason: "Ready to convert: quote accepted." };
+  const stage = normalizeProspectStage(company.prospect_stage || company.stage);
+  if (stage === "Contract Expected") return { ready: true, reason: "Ready to convert: contract expected." };
+  if (stage === "Contract Received") return { ready: true, reason: "Ready to convert: contract received." };
+  return { ready: true, reason: "Ready to convert: payment or contract milestone completed." };
+}
+
+function getSuggestedPipelineAction(company) {
+  const stage = normalizeProspectStage(company?.prospect_stage || company?.stage);
+  if (stage === "New Lead" || stage === "Saved") return "Review fit and send first outreach.";
+  if (stage === "Outreach Started") return "Follow up or log the latest response.";
+  if (stage === "Engaged") return "Confirm needs and schedule a meeting.";
+  if (stage === "Meeting Done" || stage === "Requirements Discussed") return "Prepare scope and quote.";
+  if (stage === "Quote Requested" || stage === "Negotiation") return "Finish quote details and send for review.";
+  if (stage === "Quote Sent") return "Follow up on decision timing.";
+  if (stage === "Contract Expected" || stage === "Contract Received") return "Review conversion readiness.";
+  if (stage === "Client Onboarding") return "Open the linked client profile.";
+  return "Open the record and decide the next action.";
+}
+
+function updateProspectStage(companyId, nextStage, source = "Manual") {
+  if (!companyId || !PROSPECT_STAGES.includes(nextStage)) return;
+  const company = state.companies.find((item) => item.id === companyId) || getCompanyForSavedProspect(companyId);
+  ensureProspectWorkflow(companyId, company);
+  const workflow = getProspectWorkflow(companyId);
+  const previousStage = normalizeProspectStage(workflow.currentStage || workflow.prospect_stage || company.prospect_stage || company.stage);
+  if (previousStage === nextStage) return;
+  const now = new Date().toISOString();
+  state.prospectWorkflows[companyId] = {
+    ...workflow,
+    currentStage: nextStage,
+    prospect_stage: nextStage,
+    stage: nextStage,
+    manual_stage_override: true,
+    stageUpdateSource: source,
+    stageUpdatedAt: now,
+    updated_at: now,
+  };
+  persistProspectWorkflows();
+  recordProspectActivity(companyId, `Stage changed to ${nextStage}`, source, "stage-change");
+  if (nextStage === "Quote Sent" && !state.prospectWorkflows[companyId].next_follow_up) {
+    state.prospectWorkflows[companyId].next_follow_up = getSuggestedFollowUpDate("Quote Sent", getTodayDateKey(), "");
+    persistProspectWorkflows();
+  }
+  elements.statusMessage.textContent = `Current Stage updated to ${nextStage}.`;
+  applyFilters();
+}
+
+function markActionFollowedUp(companyId) {
+  const company = state.companies.find((item) => item.id === companyId) || getCompanyForSavedProspect(companyId);
+  if (!company?.id) return;
+  recordProspectActivity(company.id, "Follow-up completed", "Manual", "follow-up-completed");
+  const nextDate = window.prompt("Set next follow-up date (YYYY-MM-DD), or leave blank to keep the current date:", "");
+  if (nextDate !== null && String(nextDate || "").trim()) {
+    setNextFollowUp(company.id, { nextFollowUp: String(nextDate).trim(), followUpPriority: company.follow_up_priority || "Normal" });
+  } else {
+    applyFilters();
+  }
+  elements.statusMessage.textContent = "Follow-up activity recorded.";
+}
+
+function promptForNewFollowUp(companyId) {
+  const nextDate = window.prompt("Next follow-up date (YYYY-MM-DD):", getTodayDateKey());
+  if (!nextDate) return;
+  setNextFollowUp(companyId, { nextFollowUp: String(nextDate).trim(), followUpPriority: "Normal" });
+}
+
+function copyDefaultActionOutreach(companyId) {
+  const company = state.companies.find((item) => item.id === companyId) || getCompanyForSavedProspect(companyId);
+  const message = `Hi ${company?.name || "there"}, I wanted to follow up and see if improving your website, booking flow, or online presence is still worth discussing.`;
+  copyToClipboard(message, "Outreach message copied.");
+  if (company?.id) recordProspectActivity(company.id, "Copied outreach from Action Center", "Manual", "copy-action-outreach");
+}
+
+function getMissingClientInfo(client) {
+  const missing = [];
+  if (!client.ownerOrManagerName && !client.email) missing.push("owner/manager contact");
+  const onboardingItems = normalizeOnboardingChecklist(client.onboardingChecklist).groups.flatMap((group) => group.items);
+  ["serviceList", "pricingPackages", "logoBrandAssets", "domainAccess", "hostingAccess", "contractReceived", "advancePaymentConfirmed"].forEach((key) => {
+    const item = onboardingItems.find((entry) => entry.key === key);
+    if (item && !item.checked) missing.push(item.label);
+  });
+  normalizeDocumentChecklist(client.documentChecklist).items
+    .filter((item) => item.critical && !item.checked)
+    .forEach((item) => missing.push(item.label));
+  const accessSummary = calculateAccessProgress(client.accessChecklist, client.accessRecords);
+  if (accessSummary.blocked || accessSummary.missing) missing.push("access references");
+  const paymentSummary = normalizePaymentSummary(client.paymentSummary, client);
+  const totals = calculatePaymentTotals(paymentSummary, normalizePaymentRecords(client.paymentRecords));
+  if (paymentSummary.advanceRequiredAmount > 0 && totals.advanceReceivedAmount <= 0) missing.push("advance payment");
+  if (!isHandoverCompleted(client) && client.projectStatus === "Handover") missing.push("final approval");
+  return [...new Set(missing)].slice(0, 8);
 }
 
 function renderSettingsView() {
@@ -3987,7 +4702,7 @@ function markOutreachMilestone(companyId, milestone, message) {
     date: getTodayDateKey(),
     outcome: message || "",
     notes: message || "",
-    nextAction: getSuggestedNextAction(company),
+    nextAction: getSuggestedPipelineAction(company),
     nextFollowUp: getSuggestedFollowUpDate(milestoneToActivityType(milestone), getTodayDateKey(), message || ""),
     source: "Manual",
     action: `mark-${normalizeText(milestone)}`,
@@ -8235,6 +8950,16 @@ function isUpcomingThisWeek(dateValue) {
 
 function buildResultsSubtitle() {
   const filters = getActiveFilters();
+  if (state.activeView === "dashboard") {
+    const metrics = getDashboardMetrics();
+    return `${metrics.overdueFollowUps} overdue follow-up${metrics.overdueFollowUps === 1 ? "" : "s"}, ${metrics.blockedClients} blocked client${metrics.blockedClients === 1 ? "" : "s"}, ${metrics.supportRequestsOpen} open support request${metrics.supportRequestsOpen === 1 ? "" : "s"}.`;
+  }
+
+  if (state.activeView === "pipeline") {
+    const savedCount = getFilteredPipelineProspects().length;
+    return `${savedCount} saved prospect${savedCount === 1 ? "" : "s"} grouped by Current Stage.`;
+  }
+
   if (state.activeView === "clients") {
     return `${state.clients.length} client${state.clients.length === 1 ? "" : "s"} saved locally.`;
   }
@@ -8247,8 +8972,8 @@ function buildResultsSubtitle() {
   }
 
   if (state.activeView === "followups") {
-    const dueCount = getFollowUpDueProspects().length;
-    return `${dueCount} follow-up${dueCount === 1 ? "" : "s"} due today or overdue.`;
+    const actionCount = getActionCenterItems().length;
+    return `${actionCount} action${actionCount === 1 ? "" : "s"} across follow-ups, quotes, clients, support, and cleanup.`;
   }
 
   if (state.activeView === "settings") {
