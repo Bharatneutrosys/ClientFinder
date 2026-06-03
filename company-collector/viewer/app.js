@@ -1315,24 +1315,47 @@ function render() {
   const isSavedView = state.activeView === "saved";
   const isClientsView = state.activeView === "clients";
   const isListsView = state.activeView === "lists";
-  const visibleCount = isClientsView ? state.clients.length : isListsView ? state.savedLists.length : state.filteredCompanies.length;
+  const isFollowupsView = state.activeView === "followups";
+  const isSettingsView = state.activeView === "settings";
+  const visibleCount = isClientsView
+    ? state.clients.length
+    : isListsView
+      ? state.savedLists.length
+      : isFollowupsView
+        ? getFollowUpDueProspects().length
+        : isSettingsView
+          ? 1
+          : state.filteredCompanies.length;
   elements.resultCount.textContent = String(visibleCount);
   elements.resultsSubtitle.textContent = buildResultsSubtitle();
   elements.resultsTitle.textContent = isClientsView
     ? "Clients"
     : isListsView
       ? "Saved Lists"
-      : isSavedView
-        ? "Saved Prospects Work Queue"
-        : "Discovery Results";
+      : isFollowupsView
+        ? "Follow-Ups"
+        : isSettingsView
+          ? "Settings"
+          : isSavedView
+            ? "Saved Prospects"
+            : "Search Results";
   elements.workflowDashboard.classList.toggle("hidden", !isSavedView);
   elements.savedWorkqueueFilters?.classList.toggle("hidden", !isSavedView);
-  elements.emptyState.classList.toggle("hidden", isListsView || visibleCount > 0 || state.loading);
-  elements.resultsContainer.classList.toggle("hidden", !isListsView && visibleCount === 0);
+  renderEmptyState();
+  elements.emptyState.classList.toggle("hidden", isListsView || isSettingsView || visibleCount > 0 || state.loading);
+  elements.resultsContainer.classList.toggle("hidden", !(isListsView || isSettingsView) && visibleCount === 0);
   elements.loadingState.classList.toggle("hidden", !state.loading);
-  elements.pageIndicator.textContent = isClientsView ? "Clients" : isListsView ? "Lists" : `Page ${state.currentPage} of ${getTotalPages()}`;
-  elements.prevPageButton.disabled = isClientsView || isListsView || state.currentPage <= 1;
-  elements.nextPageButton.disabled = isClientsView || isListsView || state.currentPage >= getTotalPages();
+  elements.pageIndicator.textContent = isClientsView
+    ? "Clients"
+    : isListsView
+      ? "Lists"
+      : isFollowupsView
+        ? "Follow-Ups"
+        : isSettingsView
+          ? "Settings"
+          : `Page ${state.currentPage} of ${getTotalPages()}`;
+  elements.prevPageButton.disabled = isClientsView || isListsView || isFollowupsView || isSettingsView || state.currentPage <= 1;
+  elements.nextPageButton.disabled = isClientsView || isListsView || isFollowupsView || isSettingsView || state.currentPage >= getTotalPages();
   elements.listViewButton?.classList.toggle("active", state.viewMode === "list");
   elements.gridViewButton?.classList.toggle("active", state.viewMode === "grid");
   elements.scanVisibleButton.disabled =
@@ -1347,6 +1370,10 @@ function render() {
     renderClientsView();
   } else if (isListsView) {
     renderSavedListsView();
+  } else if (isFollowupsView) {
+    renderFollowUpsView();
+  } else if (isSettingsView) {
+    renderSettingsView();
   } else {
     renderResultsView({
       companies: state.pagedCompanies,
@@ -1511,6 +1538,130 @@ function renderClientsView() {
   });
 }
 
+function renderFollowUpsView() {
+  const dueProspects = getFollowUpDueProspects();
+  const upcomingProspects = getSavedProspectCompanies().filter((company) => isUpcomingThisWeek(company.next_follow_up));
+  const rows = [...dueProspects, ...upcomingProspects]
+    .filter((company, index, list) => list.findIndex((item) => item.id === company.id) === index)
+    .sort((left, right) => String(left.next_follow_up || "").localeCompare(String(right.next_follow_up || "")));
+
+  elements.resultsContainer.innerHTML = rows.length
+    ? `
+      <div class="prospect-list-shell">
+        <div class="prospect-list-head">
+          <span>Saved Prospect</span>
+          <span>Current Stage</span>
+          <span>Next Follow-Up</span>
+          <span>Actions</span>
+        </div>
+        <div class="prospect-list">
+          ${rows.map((company) => renderFollowUpRow(company)).join("")}
+        </div>
+      </div>
+    `
+    : `<div class="na-panel">No follow-ups are due. Set a next follow-up from a saved prospect activity or process tab.</div>`;
+
+  elements.resultsContainer.querySelectorAll("[data-open-followup]").forEach((button) => {
+    button.addEventListener("click", () => openDetails(button.getAttribute("data-open-followup")));
+  });
+}
+
+function renderFollowUpRow(company) {
+  const followUpState = getFollowUpState(company.next_follow_up);
+  return `
+    <article class="prospect-row">
+      <button class="prospect-main" type="button" data-open-followup="${escapeAttribute(company.id)}">
+        <span class="row-title">${escapeHtml(company.name || "NA")}</span>
+        <span class="row-subtitle">${escapeHtml(company.phone || "No phone")} - ${escapeHtml([company.city, company.state].filter(Boolean).join(", "))}</span>
+      </button>
+      <div class="prospect-fit">
+        <span class="stage-chip">${escapeHtml(company.prospect_stage || "Saved")}</span>
+        <span class="row-subtitle">${escapeHtml(company.quote_status || "Quote not started")}</span>
+      </div>
+      <div class="prospect-signals">
+        <span>${escapeHtml(followUpState === "overdue" ? "Overdue" : followUpState === "due_today" ? "Due Today" : "Upcoming")}</span>
+        <span>${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
+        <span>${escapeHtml(company.next_action || "No next action set")}</span>
+      </div>
+      <div class="prospect-actions">
+        <button class="secondary-btn" type="button" data-open-followup="${escapeAttribute(company.id)}">Open</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderSettingsView() {
+  const status = storageService.getStatus();
+  const modeLabel = status.activeMode === "localStorage" ? "LocalStorage" : titleCase(status.activeMode);
+  elements.resultsContainer.innerHTML = `
+    <section class="workflow-card">
+      <p class="detail-section-title">Workspace</p>
+      <div class="overview-grid">
+        <div class="overview-card"><span class="overview-label">Workspace</span><strong>Local Workspace</strong></div>
+        <div class="overview-card"><span class="overview-label">User</span><strong>Local User</strong></div>
+        <div class="overview-card"><span class="overview-label">Role</span><strong>Owner</strong></div>
+        <div class="overview-card"><span class="overview-label">Auth</span><strong>Not Enabled Yet</strong></div>
+      </div>
+    </section>
+    <section class="workflow-card">
+      <p class="detail-section-title">Storage</p>
+      <div class="overview-grid">
+        <div class="overview-card"><span class="overview-label">Active Storage</span><strong>${escapeHtml(modeLabel)}</strong></div>
+        <div class="overview-card"><span class="overview-label">Supabase</span><strong>${status.supabaseConfigured ? "Configured" : "Not Configured"}</strong></div>
+        <div class="overview-card"><span class="overview-label">Saved Prospects Source</span><strong>${escapeHtml(status.savedProspectsSource || modeLabel)}</strong></div>
+        <div class="overview-card"><span class="overview-label">Clients Source</span><strong>${escapeHtml(status.clientsSource || modeLabel)}</strong></div>
+      </div>
+      <p class="toolbar-subtle">Local mode is intended for the MVP. Supabase migration is prepared but not fully enabled.</p>
+    </section>
+  `;
+}
+
+function renderEmptyState() {
+  if (!elements.emptyState) {
+    return;
+  }
+
+  const copy = {
+    discovery: {
+      title: "No prospects match this search.",
+      body: "Try a broader business type, city, or website condition, then run Search again.",
+      action: "Add Test Prospect",
+      showAction: true,
+    },
+    saved: {
+      title: "No saved prospects yet.",
+      body: "Search for businesses, open a result, and save the best prospects to start tracking outreach.",
+      action: "Add Test Prospect",
+      showAction: true,
+    },
+    clients: {
+      title: "No clients yet.",
+      body: "Convert an eligible saved prospect after quote acceptance or contract progress.",
+      action: "",
+      showAction: false,
+    },
+    followups: {
+      title: "No follow-ups due.",
+      body: "Set Next Follow-Up on saved prospects to build a daily work queue.",
+      action: "",
+      showAction: false,
+    },
+  }[state.activeView] || {
+    title: "Nothing to show yet.",
+    body: "Use Search or Saved Prospects to continue.",
+    action: "",
+    showAction: false,
+  };
+
+  elements.emptyState.innerHTML = `
+    <h2>${escapeHtml(copy.title)}</h2>
+    <p>${escapeHtml(copy.body)}</p>
+    ${copy.showAction ? `<button id="empty-add-test-prospect-button" class="primary-btn" type="button">${escapeHtml(copy.action)}</button>` : ""}
+  `;
+  elements.emptyAddTestProspectButton = document.querySelector("#empty-add-test-prospect-button");
+  elements.emptyAddTestProspectButton?.addEventListener("click", addTestProspect);
+}
+
 function renderSavedListsView() {
   const selectedList = getSelectedSavedList();
   const selectedProspects = selectedList ? getProspectsForList(selectedList.listId) : [];
@@ -1525,7 +1676,7 @@ function renderSavedListsView() {
       </div>
       <div class="quote-form-grid">
         <label class="inline-field"><span>List Name</span><input type="text" data-new-list-field="listName" placeholder="IT Staffing Maine" /></label>
-        <label class="inline-field"><span>Description</span><input type="text" data-new-list-field="description" placeholder="Companies to review this week" /></label>
+        <label class="inline-field"><span>Description</span><input type="text" data-new-list-field="description" placeholder="Prospects to review this week" /></label>
         <label class="inline-field"><span>Tags</span><input type="text" data-new-list-field="tags" placeholder="priority, outreach" /></label>
       </div>
       <div class="workflow-actions">
@@ -7785,7 +7936,7 @@ function isUpcomingThisWeek(dateValue) {
 function buildResultsSubtitle() {
   const filters = getActiveFilters();
   if (state.activeView === "clients") {
-    return `${state.clients.length} client${state.clients.length === 1 ? "" : "s"} in localStorage.`;
+    return `${state.clients.length} client${state.clients.length === 1 ? "" : "s"} saved locally.`;
   }
 
   if (state.activeView === "lists") {
@@ -7795,8 +7946,17 @@ function buildResultsSubtitle() {
       : "Create a saved list to organize prospects by use case.";
   }
 
+  if (state.activeView === "followups") {
+    const dueCount = getFollowUpDueProspects().length;
+    return `${dueCount} follow-up${dueCount === 1 ? "" : "s"} due today or overdue.`;
+  }
+
+  if (state.activeView === "settings") {
+    return "Workspace, storage, and migration readiness.";
+  }
+
   if (state.activeView === "saved") {
-    return `${state.filteredCompanies.length} saved prospect${state.filteredCompanies.length === 1 ? "" : "s"} sorted for follow-up and conversion work.`;
+    return `${state.filteredCompanies.length} saved prospect${state.filteredCompanies.length === 1 ? "" : "s"} sorted by current stage, quote status, and next follow-up.`;
   }
 
   return `${state.filteredCompanies.length} matches - ${getSearchSummary(filters)}`;
