@@ -21,13 +21,18 @@ function readLocalJson(key, fallbackValue) {
   try {
     const raw = globalThis.localStorage?.getItem(key);
     return JSON.parse(raw || JSON.stringify(fallbackValue));
-  } catch {
+  } catch (error) {
+    console.warn(`Ignoring corrupt localStorage value for ${key}.`, error);
     return fallbackValue;
   }
 }
 
 function writeLocalJson(key, value) {
-  globalThis.localStorage?.setItem(key, JSON.stringify(value));
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn(`Unable to save localStorage value for ${key}.`, error);
+  }
 }
 
 function normalizeText(value) {

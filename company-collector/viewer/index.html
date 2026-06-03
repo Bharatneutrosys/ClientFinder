@@ -52,7 +52,7 @@
           </div>
         </section>
 
-        <section class="sidebar-section">
+        <section class="sidebar-section hidden" aria-hidden="true">
           <div class="sidebar-heading-row">
             <p class="sidebar-heading">Saved Searches</p>
             <span id="saved-search-count" class="sidebar-count">0</span>
@@ -62,14 +62,14 @@
           </div>
         </section>
 
-        <section class="sidebar-section storage-status-panel" aria-label="Storage status">
+        <section class="sidebar-section storage-status-panel hidden" aria-label="Storage status" aria-hidden="true">
           <p class="sidebar-heading">Storage</p>
           <p id="storage-status" class="sidebar-empty">Storage Mode: LocalStorage</p>
           <button id="sync-saved-prospects-button" class="secondary-btn hidden" type="button">Sync Saved to Supabase</button>
           <button id="sync-clients-button" class="secondary-btn hidden" type="button">Sync Clients to Supabase</button>
         </section>
 
-        <section class="sidebar-section workspace-status-panel" aria-label="Workspace status">
+        <section class="sidebar-section workspace-status-panel hidden" aria-label="Workspace status" aria-hidden="true">
           <p class="sidebar-heading">Workspace</p>
           <p class="sidebar-empty">Workspace: Local Workspace</p>
           <p class="sidebar-empty">User: Local User</p>
@@ -92,15 +92,15 @@
               </select>
             </label>
 
-            <label class="search-field search-field-wide">
-              <span>Business Type</span>
-              <select id="global-search"></select>
-            </label>
-
             <label class="search-field">
               <span>Business Type Group</span>
               <select id="industry-filter">
               </select>
+            </label>
+
+            <label class="search-field search-field-wide">
+              <span>Business Type</span>
+              <select id="global-search"></select>
             </label>
 
             <label class="search-field">
@@ -110,7 +110,8 @@
 
             <label class="search-field">
               <span>State</span>
-              <select id="state-filter"></select>
+              <input id="state-filter" list="state-options" type="text" value="TX" placeholder="TX" maxlength="2" />
+              <datalist id="state-options"></datalist>
             </label>
 
             <label class="search-field">
@@ -130,10 +131,10 @@
             <div class="search-actions">
               <button id="search-button" class="primary-btn" type="button">Search</button>
               <button id="filters-button" class="secondary-btn filters-toggle" type="button" aria-expanded="false" aria-controls="filters-menu">More Filters</button>
-              <button id="add-test-prospect-button" class="secondary-btn" type="button">Add Test Prospect</button>
+              <button id="add-test-prospect-button" class="secondary-btn hidden" type="button">Add Test Prospect</button>
             </div>
           </div>
-          <div id="preset-row" class="preset-row" aria-label="Quick search presets">
+          <div id="preset-row" class="preset-row hidden" aria-label="Quick search presets">
           </div>
         </header>
 
@@ -207,7 +208,7 @@
           </label>
         </section>
 
-        <section class="followups-panel">
+        <section class="followups-panel hidden">
           <div class="followups-header">
             <div>
               <p class="results-heading">Follow-ups</p>
@@ -230,7 +231,7 @@
             </div>
             <div class="results-toolbar-right">
               <span class="result-count-chip"><strong id="result-count">0</strong><span>results</span></span>
-              <button id="scan-visible-button" class="secondary-btn" type="button">Scan All Visible</button>
+              <button id="scan-visible-button" class="secondary-btn hidden" type="button">Scan All Visible</button>
               <div class="filters-dropdown">
                 <div id="filters-menu" class="filters-menu hidden">
                   <div class="filters-menu-grid">
@@ -390,7 +391,7 @@
                   <option value="name">Name</option>
                 </select>
               </label>
-              <label class="inline-field inline-select">
+              <label class="inline-field inline-select hidden">
                 <select id="page-size-select" aria-label="Page size">
                   <option value="10">10</option>
                   <option value="20" selected>20</option>
@@ -405,16 +406,16 @@
             </div>
           </div>
 
-          <p id="status-message" class="status-message">Loading prospects...</p>
-          <p id="batch-progress" class="bulk-progress">Batch collection is idle.</p>
-          <p id="bulk-progress" class="bulk-progress">Bulk scan is idle.</p>
-          <div class="queue-actions">
+          <p id="status-message" class="status-message">Enter a business type and location to find prospects.</p>
+          <p id="batch-progress" class="bulk-progress hidden">Batch collection is idle.</p>
+          <p id="bulk-progress" class="bulk-progress hidden">Bulk scan is idle.</p>
+          <div class="queue-actions hidden">
             <button id="pause-queue-button" class="secondary-btn" type="button" disabled>Pause</button>
             <button id="resume-queue-button" class="secondary-btn" type="button" disabled>Resume</button>
             <button id="cancel-queue-button" class="secondary-btn" type="button" disabled>Cancel</button>
           </div>
 
-          <div id="loading-state" class="loading-state hidden">Loading results...</div>
+          <div id="loading-state" class="loading-state hidden">Searching...</div>
           <div id="empty-state" class="empty-state hidden">
             <h2>No prospects match the current search.</h2>
             <p>No prospects found yet. Try a broader search or add a manual/test prospect.</p>

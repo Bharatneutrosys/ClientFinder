@@ -14,6 +14,9 @@ import { renderDetailPanel, renderResultsView } from "./ui.js";
 const DEFAULT_INDUSTRY = "Beauty & Wellness";
 const DEFAULT_SEARCH_KEYWORD = "Salon";
 const DEFAULT_STATE = "TX";
+const DEFAULT_CITY = "Farmers Branch";
+const DEFAULT_WEBSITE_CONDITION = "no_website";
+const DEFAULT_DISCOVERY_PROMPT = "Enter a business type and location to find prospects.";
 const SAVED_SEARCHES_KEY = "find-any-company.saved-searches";
 const SAVED_COMPANIES_KEY = "find-any-company.saved-companies";
 const SAVED_LISTS_KEY = "find-any-company.saved-lists";
@@ -423,6 +426,7 @@ const state = {
   viewMode: "list",
   activeView: "dashboard",
   loading: false,
+  searchStarted: false,
   sortBy: "best_match",
   activeDetailTab: "overview",
   selectedClientId: null,
@@ -469,6 +473,7 @@ const elements = {
   globalSearch: document.querySelector("#global-search"),
   industryFilter: document.querySelector("#industry-filter"),
   stateFilter: document.querySelector("#state-filter"),
+  stateOptions: document.querySelector("#state-options"),
   cityFilter: document.querySelector("#city-filter"),
   websiteConditionFilter: document.querySelector("#website-condition-filter"),
   mobileAppConditionFilter: document.querySelector("#mobile-app-condition-filter"),
@@ -562,6 +567,10 @@ const elements = {
   savedSearches: document.querySelector("#saved-searches"),
   presetRow: document.querySelector("#preset-row"),
   storageStatus: document.querySelector("#storage-status"),
+  topbar: document.querySelector(".topbar"),
+  followupsPanel: document.querySelector(".followups-panel"),
+  queueActions: document.querySelector(".queue-actions"),
+  resultsToolbarRight: document.querySelector(".results-toolbar-right"),
   syncSavedProspectsButton: document.querySelector("#sync-saved-prospects-button"),
   syncClientsButton: document.querySelector("#sync-clients-button"),
   savedSearchCount: document.querySelector("#saved-search-count"),
@@ -573,50 +582,55 @@ const elements = {
   appViewButtons: [...document.querySelectorAll("[data-app-view]")],
 };
 
-await initialize();
+try {
+  await initialize();
+} catch (error) {
+  console.error("Client Finder failed to initialize.", error);
+  showAppError("Client Finder could not finish loading. Navigation is still available; try refreshing after checking the console.");
+}
 
 async function initialize() {
-  bindEvents();
   populateSearchModes();
   populateBusinessTypeGroups();
+  applySafeSearchDefaults();
   renderPresetChips();
   populateSavedWorkqueueFilters();
   populateStates();
+  bindEvents();
   await loadTargetCities();
   await hydrateSavedProspectsFromStorage();
   await hydrateClientsFromStorage();
   resetClientSyncSnapshot();
   renderSavedSearches();
-  await refreshCompanies();
   restoreQueueState();
   applyFilters();
 }
 
 function bindEvents() {
-  elements.searchButton.addEventListener("click", handleSearch);
+  elements.searchButton?.addEventListener("click", handleSearch);
 
   elements.collectMoreButton?.addEventListener("click", handleCollectMore);
   elements.batchCollectButton?.addEventListener("click", handleBatchCollect);
-  elements.addTestProspectButton.addEventListener("click", addTestProspect);
-  elements.emptyAddTestProspectButton.addEventListener("click", addTestProspect);
-  elements.saveSearchButton.addEventListener("click", handleSaveSearch);
-  elements.filtersButton.addEventListener("click", (event) => {
+  elements.addTestProspectButton?.addEventListener("click", addTestProspect);
+  elements.emptyAddTestProspectButton?.addEventListener("click", addTestProspect);
+  elements.saveSearchButton?.addEventListener("click", handleSaveSearch);
+  elements.filtersButton?.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleFiltersMenu();
   });
-  elements.exportsButton.addEventListener("click", (event) => {
+  elements.exportsButton?.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleExportsMenu();
   });
 
-  elements.pageSizeSelect.addEventListener("change", () => {
+  elements.pageSizeSelect?.addEventListener("change", () => {
     state.pageSize = Number(elements.pageSizeSelect.value || 20);
     state.currentPage = 1;
     paginate();
     render();
   });
 
-  elements.sortBySelect.addEventListener("change", () => {
+  elements.sortBySelect?.addEventListener("change", () => {
     state.sortBy = elements.sortBySelect.value || "best_match";
     state.currentPage = 1;
     applyFilters();
@@ -624,11 +638,11 @@ function bindEvents() {
 
   elements.listViewButton?.addEventListener("click", () => setViewMode("list"));
   elements.gridViewButton?.addEventListener("click", () => setViewMode("grid"));
-  elements.scanVisibleButton.addEventListener("click", handleScanAllVisible);
-  elements.pauseQueueButton.addEventListener("click", pauseScanQueue);
-  elements.resumeQueueButton.addEventListener("click", resumeScanQueue);
-  elements.cancelQueueButton.addEventListener("click", cancelScanQueue);
-  elements.exportVisibleButton.addEventListener("click", () =>
+  elements.scanVisibleButton?.addEventListener("click", handleScanAllVisible);
+  elements.pauseQueueButton?.addEventListener("click", pauseScanQueue);
+  elements.resumeQueueButton?.addEventListener("click", resumeScanQueue);
+  elements.cancelQueueButton?.addEventListener("click", cancelScanQueue);
+  elements.exportVisibleButton?.addEventListener("click", () =>
     exportProspectsToCsv(state.filteredCompanies, `client-finder-search-results-${getTodayDateKey()}.csv`)
   );
   elements.exportSavedProspectsButton?.addEventListener("click", () =>
@@ -642,40 +656,40 @@ function bindEvents() {
     exportProspectsToCsv(getFollowUpDueProspects(), `client-finder-follow-ups-due-${getTodayDateKey()}.csv`)
   );
   elements.exportCompaniesButton?.addEventListener("click", () => downloadFile("/api/exports/companies.csv"));
-  elements.exportHighFitButton.addEventListener("click", () =>
+  elements.exportHighFitButton?.addEventListener("click", () =>
     exportProspectsToCsv(
       getSavedProspectCompanies().filter((company) => ["Best Prospect", "Strong Prospect"].includes(company.opportunityPriority || company.lead_label)),
       `client-finder-high-priority-prospects-${getTodayDateKey()}.csv`
     )
   );
-  elements.exportContactsButton.addEventListener("click", () => downloadFile("/api/exports/contacts.csv"));
-  elements.exportOutreachButton.addEventListener("click", () =>
+  elements.exportContactsButton?.addEventListener("click", () => downloadFile("/api/exports/contacts.csv"));
+  elements.exportOutreachButton?.addEventListener("click", () =>
     downloadFile("/api/exports/outreach-ready-contacts.csv")
   );
-  elements.exportPhoneOnlyButton.addEventListener("click", () =>
+  elements.exportPhoneOnlyButton?.addEventListener("click", () =>
     downloadFile("/api/exports/phone-only-leads.csv")
   );
-  elements.exportNoEmailButton.addEventListener("click", () =>
+  elements.exportNoEmailButton?.addEventListener("click", () =>
     downloadFile("/api/exports/no-email-leads.csv")
   );
-  elements.exportPrimaryButton.addEventListener("click", () =>
+  elements.exportPrimaryButton?.addEventListener("click", () =>
     downloadFile("/api/exports/primary-contacts.csv")
   );
-  elements.exportVerifiedButton.addEventListener("click", () =>
+  elements.exportVerifiedButton?.addEventListener("click", () =>
     downloadFile("/api/exports/verified-decision-makers.csv")
   );
-  elements.exportGuessedButton.addEventListener("click", () =>
+  elements.exportGuessedButton?.addEventListener("click", () =>
     downloadFile("/api/exports/guessed-decision-makers.csv")
   );
-  elements.exportLinkedInButton.addEventListener("click", () =>
+  elements.exportLinkedInButton?.addEventListener("click", () =>
     downloadFile("/api/exports/linkedin-decision-makers.csv")
   );
   elements.syncSavedProspectsButton?.addEventListener("click", syncLocalSavedProspectsToSupabase);
   elements.syncClientsButton?.addEventListener("click", syncLocalClientsToSupabase);
-  elements.prevPageButton.addEventListener("click", () => changePage(-1));
-  elements.nextPageButton.addEventListener("click", () => changePage(1));
-  elements.closeDetailButton.addEventListener("click", closeDetails);
-  elements.detailModal.addEventListener("click", (event) => {
+  elements.prevPageButton?.addEventListener("click", () => changePage(-1));
+  elements.nextPageButton?.addEventListener("click", () => changePage(1));
+  elements.closeDetailButton?.addEventListener("click", closeDetails);
+  elements.detailModal?.addEventListener("click", (event) => {
     if (event.target.hasAttribute("data-close-detail")) {
       closeDetails();
     }
@@ -735,14 +749,14 @@ function bindEvents() {
     applyFilters();
   });
 
-  elements.industryFilter.addEventListener("change", () => {
+  elements.industryFilter?.addEventListener("change", () => {
     populateBusinessTypes(elements.industryFilter.value, getDefaultBusinessType(elements.industryFilter.value));
     state.currentPage = 1;
     syncPresetChips();
     applyFilters();
   });
 
-  elements.globalSearch.addEventListener("keydown", (event) => {
+  elements.globalSearch?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       handleSearch();
@@ -849,15 +863,17 @@ async function refreshCompanies() {
 async function handleSearch() {
   const filters = getActiveFilters();
   state.currentPage = 1;
+  state.searchStarted = true;
 
   if (!filters.cityLabel || !filters.state) {
     applyFilters();
     elements.statusMessage.textContent =
-      "Showing saved prospects. Enter a location and business type to collect new prospects.";
+      "Enter a location, business type, and website condition to find prospects.";
     return;
   }
 
-  elements.statusMessage.textContent = `Searching ${filters.cityLabel}, ${filters.state} for ${filters.customKeyword || filters.keywordLabel || DEFAULT_SEARCH_KEYWORD}...`;
+  setLoading(true);
+  elements.statusMessage.textContent = "Searching businesses...";
   elements.searchButton.disabled = true;
   if (elements.collectMoreButton) {
     elements.collectMoreButton.disabled = true;
@@ -881,10 +897,11 @@ async function handleSearch() {
     elements.statusMessage.textContent =
       state.filteredCompanies.length > 0
         ? `Search complete. Found ${state.filteredCompanies.length} live prospect${state.filteredCompanies.length === 1 ? "" : "s"}.`
-        : "No live prospects matched. You can still add a manual prospect.";
+        : "No results found. Try a broader business type, larger radius, or different website condition.";
   } catch (error) {
     elements.statusMessage.textContent = formatFriendlyError(error);
   } finally {
+    setLoading(false);
     elements.searchButton.disabled = false;
     if (elements.collectMoreButton) {
       elements.collectMoreButton.disabled = false;
@@ -1343,6 +1360,15 @@ function paginate() {
 }
 
 function render() {
+  try {
+    renderUnsafe();
+  } catch (error) {
+    console.error(`Client Finder render failed for ${state.activeView}.`, error);
+    showSectionError(`Unable to render ${formatViewLabel(state.activeView)}. Use the navigation to continue, or refresh after checking the console.`);
+  }
+}
+
+function renderUnsafe() {
   const isDashboardView = state.activeView === "dashboard";
   const isSavedView = state.activeView === "saved";
   const isPipelineView = state.activeView === "pipeline";
@@ -1382,10 +1408,28 @@ function render() {
                 : "Search Results";
   elements.workflowDashboard.classList.toggle("hidden", !isSavedView);
   elements.savedWorkqueueFilters?.classList.toggle("hidden", !isSavedView);
+  elements.topbar?.classList.toggle("hidden", state.activeView !== "discovery");
+  elements.followupsPanel?.classList.add("hidden");
+  elements.batchProgress?.classList.toggle("hidden", !state.batchCollect.running);
+  elements.bulkProgress?.classList.toggle("hidden", !state.bulkScan.running && !state.bulkScan.paused);
+  elements.queueActions?.classList.toggle("hidden", !state.bulkScan.running && !state.bulkScan.paused);
+  elements.statusMessage?.classList.toggle(
+    "hidden",
+    state.activeView !== "discovery" || (!state.loading && state.filteredCompanies.length > 0)
+  );
+  elements.scanVisibleButton?.classList.toggle("hidden", !state.bulkScan.running && state.activeView !== "saved");
+  elements.resultsToolbarRight?.classList.toggle("hidden", !(state.activeView === "discovery" || state.activeView === "saved"));
   renderEmptyState();
   elements.emptyState.classList.toggle(
     "hidden",
-    isDashboardView || isPipelineView || isFollowupsView || isListsView || isSettingsView || visibleCount > 0 || state.loading
+    isDashboardView ||
+      isPipelineView ||
+      isFollowupsView ||
+      isListsView ||
+      isSettingsView ||
+      (state.activeView === "discovery" && !state.searchStarted) ||
+      visibleCount > 0 ||
+      state.loading
   );
   elements.resultsContainer.classList.toggle(
     "hidden",
@@ -1411,13 +1455,21 @@ function render() {
     isDashboardView || isPipelineView || isClientsView || isListsView || isFollowupsView || isSettingsView || state.currentPage >= getTotalPages();
   elements.listViewButton?.classList.toggle("active", state.viewMode === "list");
   elements.gridViewButton?.classList.toggle("active", state.viewMode === "grid");
-  elements.scanVisibleButton.disabled =
+  if (elements.scanVisibleButton) {
+    elements.scanVisibleButton.disabled =
     state.bulkScan.running || !state.pagedCompanies.some((company) => company.website);
-  elements.pauseQueueButton.disabled = !state.bulkScan.running || state.bulkScan.paused;
-  elements.resumeQueueButton.disabled =
+  }
+  if (elements.pauseQueueButton) {
+    elements.pauseQueueButton.disabled = !state.bulkScan.running || state.bulkScan.paused;
+  }
+  if (elements.resumeQueueButton) {
+    elements.resumeQueueButton.disabled =
     state.bulkScan.running || !state.bulkScan.paused || !state.bulkScan.queue.length;
-  elements.cancelQueueButton.disabled =
+  }
+  if (elements.cancelQueueButton) {
+    elements.cancelQueueButton.disabled =
     (!state.bulkScan.running && !state.bulkScan.paused) || !state.bulkScan.queue.length;
+  }
 
   if (isDashboardView) {
     renderDashboardView();
@@ -1458,6 +1510,44 @@ function render() {
   renderBatchProgress();
   renderBulkProgress();
   renderStorageStatus();
+}
+
+function showAppError(message) {
+  showSectionError(message);
+  if (elements.statusMessage) {
+    elements.statusMessage.textContent = message;
+  }
+}
+
+function showSectionError(message) {
+  if (!elements.resultsContainer) {
+    return;
+  }
+
+  elements.resultsContainer.className = "results-container list-view";
+  elements.resultsContainer.classList.remove("hidden");
+  elements.resultsContainer.innerHTML = `
+    <section class="workflow-card">
+      <p class="detail-section-title">Page temporarily unavailable</p>
+      <p class="toolbar-subtle">${escapeHtml(message)}</p>
+    </section>
+  `;
+  elements.loadingState?.classList.add("hidden");
+  elements.emptyState?.classList.add("hidden");
+}
+
+function formatViewLabel(value) {
+  const labels = {
+    dashboard: "Dashboard",
+    discovery: "Search",
+    saved: "Saved Prospects",
+    pipeline: "Pipeline",
+    followups: "Follow-Ups",
+    clients: "Clients",
+    lists: "Saved Lists",
+    settings: "Settings",
+  };
+  return labels[value] || "this page";
 }
 
 function renderStorageStatus() {
@@ -1571,24 +1661,43 @@ async function syncLocalClientsToSupabase() {
 function renderDashboardView() {
   const metrics = getDashboardMetrics();
   const todaysActions = getTodaysActions().slice(0, 8);
+  const followUpActions = getActionCenterItems()
+    .filter((item) => String(item.type || item.actionNeeded || "").toLowerCase().includes("follow"))
+    .slice(0, 5);
+  const blockedClients = state.clients.filter((client) => isClientBlocked(client)).slice(0, 5);
   const pipelineSummary = getPipelineSummary();
-  const deliveryHealth = getClientDeliveryHealth();
   const recentActivity = getRecentActivity().slice(0, 10);
+  const hasWorkspaceData =
+    metrics.totalSavedProspects > 0 ||
+    metrics.activeClients > 0 ||
+    metrics.blockedClients > 0 ||
+    todaysActions.length > 0 ||
+    recentActivity.length > 0;
 
   elements.resultsContainer.className = "results-container list-view";
   elements.resultsContainer.innerHTML = `
+    ${
+      hasWorkspaceData
+        ? ""
+        : `
+          <section class="workflow-card">
+            <div class="workflow-header-row">
+              <div>
+                <p class="detail-section-title">No saved prospects yet.</p>
+                <p class="toolbar-subtle">Start by searching for businesses.</p>
+              </div>
+              <button class="primary-btn" type="button" data-dashboard-view="discovery">Go to Search</button>
+            </div>
+          </section>
+        `
+    }
+
     <section class="dashboard-metric-grid">
       ${[
-        ["Total Saved Prospects", metrics.totalSavedProspects],
-        ["High Priority Prospects", metrics.highPriorityProspects],
         ["Follow-Ups Due Today", metrics.followUpsDueToday],
-        ["Overdue Follow-Ups", metrics.overdueFollowUps],
-        ["Quotes Sent", metrics.quotesSent],
-        ["Quotes Accepted", metrics.quotesAccepted],
+        ["Pipeline Prospects", metrics.totalSavedProspects],
         ["Active Clients", metrics.activeClients],
         ["Blocked Clients", metrics.blockedClients],
-        ["Payments Due / Balance Due", `${metrics.paymentsDue} / ${formatMoneyValue(metrics.balanceDue) || "$0"}`],
-        ["Support Requests Open", metrics.supportRequestsOpen],
       ]
         .map(
           ([label, value]) => `
@@ -1606,12 +1715,25 @@ function renderDashboardView() {
         <div class="workflow-header-row">
           <div>
             <p class="detail-section-title">Today's Actions</p>
-            <p class="toolbar-subtle">Highest-priority work across prospects, clients, and support.</p>
+            <p class="toolbar-subtle">Follow-ups, blocked work, and client items that need attention.</p>
           </div>
-          <button class="secondary-btn" type="button" data-dashboard-view="followups">Open Action Center</button>
+          <button class="secondary-btn" type="button" data-dashboard-view="followups">Open Follow-Ups</button>
         </div>
         <div class="action-list">
-          ${todaysActions.length ? todaysActions.map(renderActionItem).join("") : `<div class="na-panel">No urgent actions for today.</div>`}
+          ${todaysActions.length ? todaysActions.map(renderActionItem).join("") : `<div class="na-panel">No actions need attention right now.</div>`}
+        </div>
+      </article>
+
+      <article class="workflow-card">
+        <div class="workflow-header-row">
+          <div>
+            <p class="detail-section-title">Follow-Ups Due</p>
+            <p class="toolbar-subtle">${escapeHtml(String(metrics.followUpsDueToday))} due today, ${escapeHtml(String(metrics.overdueFollowUps))} overdue.</p>
+          </div>
+          <button class="secondary-btn" type="button" data-dashboard-view="followups">Review Follow-Ups</button>
+        </div>
+        <div class="action-list">
+          ${followUpActions.length ? followUpActions.map(renderActionItem).join("") : `<div class="na-panel">No follow-ups due.</div>`}
         </div>
       </article>
 
@@ -1638,16 +1760,11 @@ function renderDashboardView() {
       </article>
 
       <article class="workflow-card">
-        <p class="detail-section-title">Client Delivery Health</p>
+        <p class="detail-section-title">Active Clients</p>
         <div class="overview-grid">
           ${[
-            ["Active clients", deliveryHealth.activeClients],
-            ["Blocked clients", deliveryHealth.blockedClients],
-            ["In onboarding", deliveryHealth.onboarding],
-            ["In development", deliveryHealth.development],
-            ["Awaiting approval", deliveryHealth.awaitingApproval],
-            ["In handover", deliveryHealth.handover],
-            ["Support active", deliveryHealth.supportActive],
+            ["Active Clients", metrics.activeClients],
+            ["Blocked Clients", metrics.blockedClients],
           ]
             .map(
               ([label, value]) => `
@@ -1658,6 +1775,32 @@ function renderDashboardView() {
               `
             )
             .join("")}
+        </div>
+      </article>
+
+      <article class="workflow-card">
+        <p class="detail-section-title">Blocked Clients</p>
+        <div class="action-list">
+          ${
+            blockedClients.length
+              ? blockedClients
+                  .map(
+                    (client) => `
+                      <article class="action-item">
+                        <div class="action-main">
+                          <strong>${escapeHtml(client.businessName || "Client")}</strong>
+                          <span>${escapeHtml(client.projectStatus || "Blocked")}</span>
+                          <small>${escapeHtml(client.ownerOrManagerName || client.phone || "No owner contact")}</small>
+                        </div>
+                        <div class="workflow-actions action-buttons">
+                          <button class="secondary-btn" type="button" data-open-action-client="${escapeAttribute(client.clientId)}">Open Client</button>
+                        </div>
+                      </article>
+                    `
+                  )
+                  .join("")
+              : `<div class="na-panel">No blocked clients.</div>`
+          }
         </div>
       </article>
 
@@ -1694,6 +1837,16 @@ function renderDashboardView() {
       render();
     });
   });
+}
+
+function isClientBlocked(client = {}) {
+  return (
+    String(client.projectStatus || "").trim() === "Blocked" ||
+    String(client.handoverStatus || "").trim() === "Blocked" ||
+    String(client.currentClientStatus || "").trim() === "Blocked" ||
+    Boolean(String(client.handoverBlocker || "").trim()) ||
+    calculateAccessProgress(client.accessChecklist, client.accessRecords).blocked > 0
+  );
 }
 
 function renderPipelineView() {
@@ -2638,10 +2791,10 @@ function renderEmptyState() {
 
   const copy = {
     discovery: {
-      title: "No prospects match this search.",
-      body: "Try a broader business type, city, or website condition, then run Search again.",
+      title: "No results found.",
+      body: "Try a broader business type, larger radius, or different website condition.",
       action: "Add Test Prospect",
-      showAction: true,
+      showAction: false,
     },
     saved: {
       title: "No saved prospects yet.",
@@ -6477,42 +6630,43 @@ function getTotalPages() {
 }
 
 function getActiveFilters() {
-  const keywordLabel = String(elements.globalSearch.value || "").trim();
+  const keywordLabel = String(elements.globalSearch?.value || DEFAULT_SEARCH_KEYWORD).trim();
   const customKeyword = String(elements.keywordFilter?.value || "").trim();
+  const stateCode = String(elements.stateFilter?.value || "").trim().toUpperCase();
 
   return {
     searchMode: elements.searchModeFilter?.value || DEFAULT_SEARCH_MODE,
-    state: elements.stateFilter.value,
-    city: String(elements.cityFilter.value || "").trim().toLowerCase(),
-    cityLabel: String(elements.cityFilter.value || "").trim(),
+    state: stateCode,
+    city: String(elements.cityFilter?.value || "").trim().toLowerCase(),
+    cityLabel: String(elements.cityFilter?.value || "").trim(),
     keyword: (customKeyword || keywordLabel).toLowerCase(),
     keywordLabel,
     customKeyword,
-    industry: elements.industryFilter.value || "",
+    industry: elements.industryFilter?.value || DEFAULT_INDUSTRY,
     radius: elements.radiusFilter?.value || "",
-    source: elements.sourceFilter.value,
-    websiteCondition: elements.websiteConditionFilter.value || "",
-    mobileAppCondition: elements.mobileAppConditionFilter.value || "",
+    source: elements.sourceFilter?.value || "",
+    websiteCondition: elements.websiteConditionFilter?.value || "",
+    mobileAppCondition: elements.mobileAppConditionFilter?.value || "",
     bookingSystemCondition: elements.bookingSystemConditionFilter?.value || "",
     onlinePaymentCondition: elements.onlinePaymentConditionFilter?.value || "",
     socialPresenceCondition: elements.socialPresenceConditionFilter?.value || "",
     phoneAvailable: elements.phoneAvailableFilter?.value || "",
     minimumRating: Number(elements.minimumRatingFilter?.value || 0),
     minimumReviewCount: Number(elements.minimumReviewCountFilter?.value || 0),
-    leadScore: elements.leadScoreFilter.value,
-    reviewStatus: elements.reviewStatusFilter.value,
-    contactType: elements.contactTypeFilter.value,
-    hasPrimary: elements.hasPrimaryFilter.checked,
-    hasWebsite: elements.hasWebsiteFilter.checked,
-    hasEmail: elements.hasEmailFilter.checked,
-    hasPhone: elements.hasPhoneFilter.checked,
-    highConfidence: elements.highConfidenceFilter.checked,
-    needsReview: elements.needsReviewFilter.checked,
-    failedScans: elements.failedScansFilter.checked,
+    leadScore: elements.leadScoreFilter?.value || "",
+    reviewStatus: elements.reviewStatusFilter?.value || "",
+    contactType: elements.contactTypeFilter?.value || "",
+    hasPrimary: elements.hasPrimaryFilter?.checked || false,
+    hasWebsite: elements.hasWebsiteFilter?.checked || false,
+    hasEmail: elements.hasEmailFilter?.checked || false,
+    hasPhone: elements.hasPhoneFilter?.checked || false,
+    highConfidence: elements.highConfidenceFilter?.checked || false,
+    needsReview: elements.needsReviewFilter?.checked || false,
+    failedScans: elements.failedScansFilter?.checked || false,
     showHidden: elements.showHiddenFilter?.checked || false,
-    verifiedOnly: elements.verifiedOnlyFilter.checked,
-    guessedEmails: elements.guessedEmailFilter.checked,
-    linkedInFound: elements.linkedInFoundFilter.checked,
+    verifiedOnly: elements.verifiedOnlyFilter?.checked || false,
+    guessedEmails: elements.guessedEmailFilter?.checked || false,
+    linkedInFound: elements.linkedInFoundFilter?.checked || false,
     savedStatus: elements.savedStatusFilter?.value || "",
     savedStage: elements.savedStageFilter?.value || "",
     savedFollowUp: elements.savedFollowupFilter?.value || "",
@@ -6776,6 +6930,27 @@ function populateBusinessTypeGroups() {
   setBusinessTypeSelection(DEFAULT_INDUSTRY, DEFAULT_SEARCH_KEYWORD, { applyDefaults: true });
 }
 
+function applySafeSearchDefaults() {
+  if (elements.searchModeFilter) {
+    elements.searchModeFilter.value = DEFAULT_SEARCH_MODE;
+  }
+  if (elements.industryFilter && elements.globalSearch) {
+    setBusinessTypeSelection(DEFAULT_INDUSTRY, DEFAULT_SEARCH_KEYWORD, { applyDefaults: true });
+  }
+  if (elements.cityFilter) {
+    elements.cityFilter.value = elements.cityFilter.value || DEFAULT_CITY;
+  }
+  if (elements.stateFilter) {
+    elements.stateFilter.value = elements.stateFilter.value || DEFAULT_STATE;
+  }
+  if (elements.websiteConditionFilter) {
+    elements.websiteConditionFilter.value = DEFAULT_WEBSITE_CONDITION;
+  }
+  if (elements.statusMessage) {
+    elements.statusMessage.textContent = DEFAULT_DISCOVERY_PROMPT;
+  }
+}
+
 function populateBusinessTypes(group, selectedType = "") {
   const groupConfig = BUSINESS_TYPE_GROUPS[group] || BUSINESS_TYPE_GROUPS[DEFAULT_INDUSTRY];
   const types = Object.keys(groupConfig.types);
@@ -6840,9 +7015,16 @@ function populateStates() {
     "VT", "VA", "WA", "WV", "WI", "WY",
   ];
 
-  elements.stateFilter.innerHTML = states
-    .map((value) => `<option value="${value}">${value || "All states"}</option>`)
+  if (elements.stateOptions) {
+    elements.stateOptions.innerHTML = states
+      .filter(Boolean)
+      .map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`)
+      .join("");
+  } else if (elements.stateFilter?.tagName === "SELECT") {
+    elements.stateFilter.innerHTML = states
+    .map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value || "All states")}</option>`)
     .join("");
+  }
   elements.stateFilter.value = DEFAULT_STATE;
 }
 
@@ -8950,6 +9132,10 @@ function isUpcomingThisWeek(dateValue) {
 
 function buildResultsSubtitle() {
   const filters = getActiveFilters();
+  if (state.activeView === "discovery" && !state.searchStarted) {
+    return DEFAULT_DISCOVERY_PROMPT;
+  }
+
   if (state.activeView === "dashboard") {
     const metrics = getDashboardMetrics();
     return `${metrics.overdueFollowUps} overdue follow-up${metrics.overdueFollowUps === 1 ? "" : "s"}, ${metrics.blockedClients} blocked client${metrics.blockedClients === 1 ? "" : "s"}, ${metrics.supportRequestsOpen} open support request${metrics.supportRequestsOpen === 1 ? "" : "s"}.`;

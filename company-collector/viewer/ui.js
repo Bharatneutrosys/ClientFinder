@@ -165,7 +165,7 @@ export function renderDetailPanel({
   const primaryContact = company.primary_contact || null;
   const otherContacts = contacts.filter((contact) => !isSameContact(contact, primaryContact));
   const isSaved = Array.isArray(savedCompanies) && savedCompanies.includes(company.id);
-  const availableTabs = ["overview", "contact", "outreach", "activity", "process", "notes", "quote"];
+  const availableTabs = ["overview", "contact", "outreach", "activity", "process", "quote", "notes"];
   const selectedTab = availableTabs.includes(activeTab) ? activeTab : "overview";
   const statusMeta = getScanStatusMeta(company.scan_status || SCAN_STATUS.NOT_SCANNED);
   const failureReason = company.scan_failure_reason || "";
@@ -496,9 +496,9 @@ function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanie
   return `
     <div class="prospect-list-shell">
       <div class="prospect-list-head">
-        <span>${mode === "saved" ? "Saved prospect" : "Business"}</span>
-        <span>${mode === "saved" ? "Stage" : "Fit"}</span>
-        <span>${mode === "saved" ? "Work queue" : "Signals"}</span>
+        <span>Business</span>
+        <span>${mode === "saved" ? "Stage" : "Opportunity"}</span>
+        <span>${mode === "saved" ? "Next Action" : "Signals"}</span>
         <span>Actions</span>
       </div>
       <div class="prospect-list">
@@ -511,57 +511,39 @@ function renderCompanyTable(companies, scanner, selectedCompanyId, savedCompanie
 }
 
 function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies, mode, searchMode = DEFAULT_SEARCH_MODE) {
-  const bestContact = company.primary_contact || null;
-  const statusMeta = getScanStatusMeta(scanState.status || company.scan_status || SCAN_STATUS.NOT_SCANNED);
-  const failureReason = scanState.failureReason || company.scan_failure_reason || "";
-  const confidence = Number(bestContact?.confidence_score || company.confidence_score || 0);
-  const leadScore = Number(company.lead_score || 0);
   const isSaved = isSavedProspect(company, savedCompanies);
-  const reasonChips = renderReasonChips(company.reasonChips);
   const isSavedMode = mode === "saved";
-  const isHidden = Boolean(company.is_hidden || company.archived);
-  const contextLabel = getModeSpecificResultLabel(company.searchMode || searchMode);
+  const location = [company.city, company.state].filter(Boolean).join(", ") || "No location";
+  const businessType = company.keyword || company.businessType || company.industry || "Business";
+  const priority = company.opportunityPriority || company.lead_label || getModeSpecificResultLabel(company.searchMode || searchMode);
+  const websiteStatus = company.websiteStatus || (company.website ? "Has Website" : "No Website");
 
   return `
     <article class="prospect-row ${company.id === selectedCompanyId ? "selected" : ""} ${isSaved ? "saved" : ""}">
       <button class="prospect-main" type="button" data-open-details="${escapeAttribute(company.id)}">
         <span class="row-title">${escapeHtml(company.name || "NA")}</span>
-        <span class="row-subtitle">${escapeHtml(company.industry || company.keyword || "NA")} · ${escapeHtml(company.city || "NA")}, ${escapeHtml(company.state || "NA")}</span>
-        <span class="row-subtitle">${escapeHtml(company.phone || "No phone")} · ${escapeHtml(formatRating(company))}</span>
+        <span class="row-subtitle">${escapeHtml(businessType)} - ${escapeHtml(location)}</span>
+        <span class="row-subtitle">${escapeHtml(company.phone || "No phone")}</span>
       </button>
       <div class="prospect-fit">
         ${
           isSavedMode
             ? `<span class="stage-chip">${escapeHtml(getProspectStage(company))}</span><span class="row-subtitle">${escapeHtml(company.quote_status || "Not Started")}</span>`
-            : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(company.opportunityPriority || company.lead_label))}">${escapeHtml(contextLabel)}</span><span class="row-subtitle">${escapeHtml(String(leadScore))}/100</span>`
+            : `<span class="quality-pill ${escapeAttribute(getLeadBadgeClass(priority))}">${escapeHtml(priority)}</span>`
         }
-        ${isHidden && !isSavedMode ? `<span class="stage-chip">Hidden</span>` : ""}
         ${company.archived && isSavedMode ? `<span class="stage-chip">Archived</span>` : ""}
       </div>
       <div class="prospect-signals">
         ${
           isSavedMode
             ? `
-              <span>Last contacted: ${escapeHtml(company.last_contacted_at || "NA")}</span>
               <span>Next follow-up: ${escapeHtml(company.next_follow_up || "Not scheduled")}</span>
               <span>Follow-up status: ${escapeHtml(getFollowUpStatus(company.next_follow_up))}</span>
               <span>Next action: ${escapeHtml(company.next_action || "NA")}</span>
-              <span>Website: ${escapeHtml(company.websiteStatus || "Unknown")}</span>
-              <span>Quality: ${escapeHtml(company.websiteQualityStatus || "Not Checked")}${
-                Number(company.websiteQualityScore || 0) > 0 ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)` : ""
-              }</span>
-              ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>Booking: ${escapeHtml(company.bookingPlatform)}</span>` : ""}
-              ${company.socialPlatform && company.socialPlatform !== "Unknown" ? `<span>Social: ${escapeHtml(company.socialPlatform)}</span>` : ""}
             `
             : `
-              <span>${escapeHtml(company.websiteStatus || "Unknown")}</span>
-              <span>${escapeHtml(company.websiteQualityStatus || "Not Checked")}${
-                Number(company.websiteQualityScore || 0) > 0 ? ` (${escapeHtml(String(company.websiteQualityScore || 0))}/100)` : ""
-              }</span>
-              <span>${escapeHtml(company.mobileAppStatus || "Unknown")}</span>
-              ${company.bookingPlatform && company.bookingPlatform !== "Unknown" ? `<span>${escapeHtml(company.bookingPlatform)}</span>` : ""}
-              ${company.socialPlatform && company.socialPlatform !== "Unknown" ? `<span>${escapeHtml(company.socialPlatform)}</span>` : ""}
-              ${reasonChips}
+              <span>Website: ${escapeHtml(websiteStatus)}</span>
+              <span>${escapeHtml(formatRating(company))}</span>
             `
         }
       </div>
@@ -575,8 +557,7 @@ function renderCompanyRow(company, scanState, selectedCompanyId, savedCompanies,
             `
             : `
               <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save"}</button>
-              <button class="secondary-btn" type="button" data-hide-company="${escapeAttribute(company.id)}">${isHidden ? "Restore" : "Hide"}</button>
-              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">View Details</button>
+              <button class="secondary-btn" type="button" data-open-details="${escapeAttribute(company.id)}">Open Details</button>
             `
         }
       </div>
