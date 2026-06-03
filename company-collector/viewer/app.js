@@ -864,16 +864,16 @@ async function handleSearch() {
   const filters = getActiveFilters();
   state.currentPage = 1;
   state.searchStarted = true;
+  const searchLabel = formatSearchLabel(filters);
 
-  if (!filters.cityLabel || !filters.state) {
+  if (!isSearchLocationValid(filters.cityLabel) || !filters.state) {
     applyFilters();
-    elements.statusMessage.textContent =
-      "Enter a location, business type, and website condition to find prospects.";
+    elements.statusMessage.textContent = "Please enter a city or location before searching.";
     return;
   }
 
   setLoading(true);
-  elements.statusMessage.textContent = "Searching businesses...";
+  elements.statusMessage.textContent = `Searching: ${searchLabel}`;
   elements.searchButton.disabled = true;
   if (elements.collectMoreButton) {
     elements.collectMoreButton.disabled = true;
@@ -896,8 +896,8 @@ async function handleSearch() {
     applyFilters();
     elements.statusMessage.textContent =
       state.filteredCompanies.length > 0
-        ? `Search complete. Found ${state.filteredCompanies.length} live prospect${state.filteredCompanies.length === 1 ? "" : "s"}.`
-        : "No results found. Try a broader business type, larger radius, or different website condition.";
+        ? `Showing results for ${searchLabel}`
+        : `No results found for ${searchLabel}. Try a broader business type, larger radius, or Website Condition = Any.`;
   } catch (error) {
     elements.statusMessage.textContent = formatFriendlyError(error);
   } finally {
@@ -914,6 +914,18 @@ function normalizeText(value) {
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "");
+}
+
+function isSearchLocationValid(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  return Boolean(normalized) && !["city", "location", "undefined", "null"].includes(normalized);
+}
+
+function formatSearchLabel(filters) {
+  const businessType = filters.customKeyword || filters.keywordLabel || DEFAULT_SEARCH_KEYWORD;
+  const city = isSearchLocationValid(filters.cityLabel) ? filters.cityLabel : DEFAULT_CITY;
+  const stateCode = String(filters.state || DEFAULT_STATE).trim().toUpperCase();
+  return `${businessType} in ${city}, ${stateCode}`;
 }
 
 function normalizePhone(value) {
@@ -1415,7 +1427,7 @@ function renderUnsafe() {
   elements.queueActions?.classList.toggle("hidden", !state.bulkScan.running && !state.bulkScan.paused);
   elements.statusMessage?.classList.toggle(
     "hidden",
-    state.activeView !== "discovery" || (!state.loading && state.filteredCompanies.length > 0)
+    state.activeView !== "discovery"
   );
   elements.scanVisibleButton?.classList.toggle("hidden", !state.bulkScan.running && state.activeView !== "saved");
   elements.resultsToolbarRight?.classList.toggle("hidden", !(state.activeView === "discovery" || state.activeView === "saved"));
@@ -2798,13 +2810,13 @@ function renderEmptyState() {
     },
     saved: {
       title: "No saved prospects yet.",
-      body: "Search for businesses, open a result, and save the best prospects to start tracking outreach.",
+      body: "Search businesses and save the best opportunities.",
       action: "Add Test Prospect",
-      showAction: true,
+      showAction: false,
     },
     clients: {
       title: "No clients yet.",
-      body: "Convert an eligible saved prospect after quote acceptance or contract progress.",
+      body: "Convert a qualified prospect when the project is ready.",
       action: "",
       showAction: false,
     },
@@ -6633,12 +6645,14 @@ function getActiveFilters() {
   const keywordLabel = String(elements.globalSearch?.value || DEFAULT_SEARCH_KEYWORD).trim();
   const customKeyword = String(elements.keywordFilter?.value || "").trim();
   const stateCode = String(elements.stateFilter?.value || "").trim().toUpperCase();
+  const cityValue = String(elements.cityFilter?.value || "").trim();
+  const cityLabel = isSearchLocationValid(cityValue) ? cityValue : "";
 
   return {
     searchMode: elements.searchModeFilter?.value || DEFAULT_SEARCH_MODE,
     state: stateCode,
-    city: String(elements.cityFilter?.value || "").trim().toLowerCase(),
-    cityLabel: String(elements.cityFilter?.value || "").trim(),
+    city: cityLabel.toLowerCase(),
+    cityLabel,
     keyword: (customKeyword || keywordLabel).toLowerCase(),
     keywordLabel,
     customKeyword,
@@ -6938,7 +6952,7 @@ function applySafeSearchDefaults() {
     setBusinessTypeSelection(DEFAULT_INDUSTRY, DEFAULT_SEARCH_KEYWORD, { applyDefaults: true });
   }
   if (elements.cityFilter) {
-    elements.cityFilter.value = elements.cityFilter.value || DEFAULT_CITY;
+    elements.cityFilter.value = isSearchLocationValid(elements.cityFilter.value) ? elements.cityFilter.value : DEFAULT_CITY;
   }
   if (elements.stateFilter) {
     elements.stateFilter.value = elements.stateFilter.value || DEFAULT_STATE;
@@ -6991,6 +7005,9 @@ function applyBusinessTypeDefaults(group, type) {
 
 function getDefaultBusinessType(group) {
   const groupConfig = BUSINESS_TYPE_GROUPS[group] || BUSINESS_TYPE_GROUPS[DEFAULT_INDUSTRY];
+  if ((group || DEFAULT_INDUSTRY) === DEFAULT_INDUSTRY && groupConfig.types[DEFAULT_SEARCH_KEYWORD]) {
+    return DEFAULT_SEARCH_KEYWORD;
+  }
   return Object.keys(groupConfig.types)[0] || DEFAULT_SEARCH_KEYWORD;
 }
 
@@ -9138,7 +9155,7 @@ function buildResultsSubtitle() {
 
   if (state.activeView === "dashboard") {
     const metrics = getDashboardMetrics();
-    return `${metrics.overdueFollowUps} overdue follow-up${metrics.overdueFollowUps === 1 ? "" : "s"}, ${metrics.blockedClients} blocked client${metrics.blockedClients === 1 ? "" : "s"}, ${metrics.supportRequestsOpen} open support request${metrics.supportRequestsOpen === 1 ? "" : "s"}.`;
+    return `${metrics.followUpsDueToday} follow-up${metrics.followUpsDueToday === 1 ? "" : "s"} due today, ${metrics.blockedClients} blocked client${metrics.blockedClients === 1 ? "" : "s"}.`;
   }
 
   if (state.activeView === "pipeline") {
@@ -9147,7 +9164,7 @@ function buildResultsSubtitle() {
   }
 
   if (state.activeView === "clients") {
-    return `${state.clients.length} client${state.clients.length === 1 ? "" : "s"} saved locally.`;
+    return `${state.clients.length} active client record${state.clients.length === 1 ? "" : "s"}.`;
   }
 
   if (state.activeView === "lists") {
@@ -9676,11 +9693,10 @@ function buildIndustryQuery(industry, keywordLabel) {
 
 function buildSearchKeyword(filters) {
   if (filters.customKeyword) {
-    return [filters.customKeyword, filters.keywordLabel, filters.industry].filter(Boolean).join(" ").trim();
+    return filters.customKeyword.trim();
   }
 
-  const keyword = filters.keywordLabel || DEFAULT_SEARCH_KEYWORD;
-  return buildIndustryQuery(filters.industry, keyword);
+  return normalizeBusinessTypeForGroup(filters.industry || DEFAULT_INDUSTRY, filters.keywordLabel || DEFAULT_SEARCH_KEYWORD);
 }
 
 function mapCollectorSource(source) {

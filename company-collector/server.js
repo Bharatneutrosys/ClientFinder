@@ -80,7 +80,7 @@ app.get("/api/prospects/search", async (request, response) => {
         "X-Goog-FieldMask": GOOGLE_PLACES_FIELD_MASK,
       },
       body: JSON.stringify({
-        textQuery: `${businessType} in ${city} ${state}`,
+        textQuery: `${businessType.toLowerCase()} in ${city}, ${state}`,
         maxResultCount: 12,
       }),
     });
