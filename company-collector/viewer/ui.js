@@ -13,6 +13,7 @@ const PROSPECT_STAGES = [
   "Negotiation",
   "Contract Expected",
   "Contract Received",
+  "Client Converted",
   "Client Onboarding",
   "Lost",
   "Archived",
@@ -31,7 +32,7 @@ const QUOTE_PROJECT_TYPES = [
 ];
 const QUOTE_PACKAGE_TYPES = ["Starter", "Professional", "Premium", "Custom"];
 const FOLLOW_UP_PRIORITIES = ["Low", "Normal", "High"];
-const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received", "Client Onboarding"]);
+const CONVERTIBLE_STAGES = new Set(["Contract Expected", "Contract Received", "Client Converted", "Client Onboarding"]);
 const COMMUNICATION_METHODS = ["Call", "Email", "SMS", "WhatsApp", "Onsite Visit", "LinkedIn", "Other"];
 const ACTIVITY_TYPES = [
   "Intro Email Sent",
@@ -227,17 +228,25 @@ export function renderDetailPanel({
     </div>
 
     <div class="detail-actions">
-      <a class="primary-btn inline-link-btn" href="${escapeAttribute(company.website || "#")}" target="_blank" rel="noreferrer">Website</a>
+      ${
+        company.website
+          ? `<a class="primary-btn inline-link-btn" href="${escapeAttribute(company.website)}" target="_blank" rel="noreferrer">Website</a>`
+          : `<span class="detail-tag">No website</span>`
+      }
       <button class="secondary-btn" type="button" data-detail-scan="${escapeAttribute(company.id)}">Deep Scan</button>
-      <button class="secondary-btn" type="button" data-check-website-quality="${escapeAttribute(company.id)}">
-        ${company.websiteCheckStatus === "Checking" ? "Checking..." : "Check Website Quality"}
-      </button>
+      ${
+        company.website
+          ? `<button class="secondary-btn" type="button" data-check-website-quality="${escapeAttribute(company.id)}">
+              ${company.websiteCheckStatus === "Checking" ? "Checking..." : "Check Website Quality"}
+            </button>`
+          : ""
+      }
       ${
         failureReason
           ? `<button class="secondary-btn" type="button" data-detail-retry="${escapeAttribute(company.id)}">Retry</button>`
           : ""
       }
-      <button class="secondary-btn" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved Prospect" : "Save Prospect"}</button>
+      <button class="${isSaved ? "primary-btn" : "secondary-btn"}" type="button" data-save-company="${escapeAttribute(company.id)}">${isSaved ? "Saved" : "Save Prospect"}</button>
       ${renderListSelector(company, savedLists)}
       ${
         existingClientId
@@ -247,6 +256,14 @@ export function renderDetailPanel({
             : `<span class="toolbar-subtle">Available after quote acceptance or contract progress.</span>`
       }
     </div>
+
+    <p class="detail-guidance">
+      ${
+        isSaved
+          ? "Set a follow-up, log activity, and move the stage as the conversation progresses."
+          : "Save this business to start tracking outreach, follow-ups, quote status, and conversion."
+      }
+    </p>
 
     <div class="detail-tabs">
       ${availableTabs
@@ -912,6 +929,7 @@ function renderTabContent({
     return `
       <section class="workflow-card">
         <p class="detail-section-title">Add Activity</p>
+        <p class="toolbar-subtle">Log outreach so the timeline, follow-up plan, and dashboard actions stay current.</p>
         <div class="workflow-form-grid">
           <label class="inline-field"><span>Activity Type</span><select data-activity-type>${ACTIVITY_TYPES.map((type) => `<option value="${escapeAttribute(type)}">${escapeHtml(type)}</option>`).join("")}</select></label>
           <label class="inline-field"><span>Date</span><input type="date" value="${escapeAttribute(getTodayDateInput())}" data-communication-date /></label>
@@ -942,6 +960,7 @@ function renderTabContent({
       ${renderStageUpdateNote(company)}
       <section class="workflow-card">
         <p class="detail-section-title">Follow-up Plan</p>
+        <p class="toolbar-subtle">Set a follow-up so this prospect appears in the daily action list.</p>
         <div class="workflow-form-grid">
           <label class="inline-field"><span>Date</span><input type="date" value="${escapeAttribute(company.next_follow_up || "")}" data-follow-up-input /></label>
           <label class="inline-field"><span>Next Action</span><input type="text" value="${escapeAttribute(company.next_action || "")}" data-follow-up-action placeholder="Call owner, send quote, confirm scope" /></label>
@@ -949,7 +968,7 @@ function renderTabContent({
           <label class="inline-field"><span>Last Contacted</span><input type="date" value="${escapeAttribute(company.last_contacted_at || "")}" data-last-contacted-input /></label>
           <label class="inline-field"><span>Quote Status</span><select data-quote-status-input>${QUOTE_STATUSES.map((status) => `<option value="${escapeAttribute(status)}" ${status === (company.quote_status || "Not Started") ? "selected" : ""}>${escapeHtml(status)}</option>`).join("")}</select></label>
         </div>
-        <div class="workflow-actions"><button class="primary-btn" type="button" data-set-follow-up="${escapeAttribute(company.id)}">Save Workflow</button></div>
+        <div class="workflow-actions"><button class="primary-btn" type="button" data-set-follow-up="${escapeAttribute(company.id)}">Save Follow-Up</button></div>
       </section>
       ${renderMilestoneChecklist(company)}
       ${renderConversionPlaceholder(company)}
@@ -974,6 +993,7 @@ function renderTabContent({
     return `
       <section class="workflow-card">
         <p class="detail-section-title">Quote preparation</p>
+        <p class="toolbar-subtle">Prepare the quote, mark it sent, then mark accepted when the prospect is ready to convert.</p>
         <div class="overview-grid">
           ${renderProcessCard("Quote status", quote.quoteStatus || "Not Started")}
           ${renderProcessCard("Suggested package", packageHint)}
@@ -1693,6 +1713,7 @@ function renderMilestoneChecklist(company) {
   return `
     <section class="workflow-card">
       <p class="detail-section-title">Milestones</p>
+      <p class="toolbar-subtle">Checking key milestones can advance the stage and unlock client conversion.</p>
       <div class="milestone-list">
         ${PROCESS_MILESTONES.map(
           (milestone) => `

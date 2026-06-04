@@ -902,6 +902,18 @@ a {
   flex-wrap: wrap;
 }
 
+.detail-guidance {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #eadcca;
+  border-radius: 12px;
+  background: #fbf6ee;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .detail-tabs {
   padding-bottom: 2px;
 }

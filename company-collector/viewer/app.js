@@ -60,6 +60,7 @@ const PROSPECT_STAGES = [
   "Negotiation",
   "Contract Expected",
   "Contract Received",
+  "Client Converted",
   "Client Onboarding",
   "Lost",
   "Archived",
@@ -75,7 +76,7 @@ const PIPELINE_STAGE_GROUPS = [
   { label: "Quote Sent", stages: ["Quote Sent"] },
   { label: "Quote Accepted", matcher: (company) => String(company.quote_status || "") === "Accepted" },
   { label: "Contract Expected", stages: ["Contract Expected", "Contract Received"] },
-  { label: "Client Converted", stages: ["Client Onboarding"] },
+  { label: "Client Converted", stages: ["Client Converted", "Client Onboarding"] },
   { label: "Lost / Not Interested", stages: ["Lost", "Archived"] },
   { label: "Follow Up Later", matcher: (company) => getFollowUpState(company.next_follow_up) === "upcoming" },
 ];
@@ -2232,7 +2233,7 @@ function getProspectActionItems(company) {
       severity: "normal",
     });
   }
-  if (followUpState === "none" && !["Lost", "Archived", "Client Onboarding"].includes(normalizeProspectStage(company.prospect_stage))) {
+  if (followUpState === "none" && !["Lost", "Archived", "Client Converted", "Client Onboarding"].includes(normalizeProspectStage(company.prospect_stage))) {
     items.push({
       ...base,
       category: "No Follow-Up Set",
@@ -2427,7 +2428,7 @@ function getSuggestedPipelineAction(company) {
   if (stage === "Quote Requested" || stage === "Negotiation") return "Finish quote details and send for review.";
   if (stage === "Quote Sent") return "Follow up on decision timing.";
   if (stage === "Contract Expected" || stage === "Contract Received") return "Review conversion readiness.";
-  if (stage === "Client Onboarding") return "Open the linked client profile.";
+  if (stage === "Client Converted" || stage === "Client Onboarding") return "Open the linked client profile.";
   return "Open the record and decide the next action.";
 }
 
@@ -4612,30 +4613,39 @@ async function toggleSavedCompany(companyId) {
     return;
   }
 
-  const company = state.companies.find((item) => item.id === companyId);
-  const existingSavedId = company ? findSavedProspectId(company) : companyId;
-
-  if (existingSavedId) {
-    state.savedCompanies = state.savedCompanies.filter((id) => id !== existingSavedId);
-    if (existingSavedId !== companyId) {
-      state.savedCompanies = state.savedCompanies.filter((id) => id !== companyId);
-    }
-    await persistSavedProspectRemoval(company || { id: existingSavedId });
-    elements.statusMessage.textContent = "Prospect removed from saved.";
-  } else {
-    state.savedCompanies = [...state.savedCompanies, companyId];
-    ensureProspectWorkflow(companyId, company);
-    recordProspectActivity(companyId, "Saved to prospects", "User", "save");
-    await persistSavedProspectRecord(companyId);
-    elements.statusMessage.textContent = "Prospect saved.";
+  const company = state.companies.find((item) => item.id === companyId) || state.manualProspects.find((item) => item.id === companyId);
+  if (!company) {
+    elements.statusMessage.textContent = "Prospect was not found.";
+    return;
   }
+
+  const existingSavedId = findSavedProspectId(company);
+  const targetCompany =
+    (existingSavedId && (state.companies.find((item) => item.id === existingSavedId) || state.manualProspects.find((item) => item.id === existingSavedId))) ||
+    company;
+  const snapshot = upsertSavedProspectSnapshot(targetCompany);
+  const savedId = existingSavedId || snapshot.id || companyId;
+  const wasAlreadySaved = Boolean(existingSavedId);
+
+  state.savedCompanies = [...new Set([...state.savedCompanies.filter((id) => id !== companyId || id === savedId), savedId])];
+  ensureProspectWorkflow(savedId, snapshot);
+  ensureSavedProspect(snapshot);
+  state.selectedCompanyId = savedId;
+
+  if (!wasAlreadySaved) {
+    recordProspectActivity(savedId, "Saved to prospects", "User", "save");
+  }
+
+  await persistSavedProspectRecord(savedId);
+  elements.statusMessage.textContent = wasAlreadySaved
+    ? `${snapshot.name || "Prospect"} is already saved. Open the saved prospect to continue tracking.`
+    : `Saved ${snapshot.name || "prospect"}. Set a follow-up to add it to today's action workflow.`;
 
   persistSavedCompanies();
-  if (company) {
-    applyProspectWorkflow(company);
-  }
+  state.companies = augmentCompaniesWithScannerData(mergeManualProspects(state.companies, state.manualProspects));
   updateSummary();
   applyFilters();
+  renderDetail();
 }
 
 function hideCompany(companyId) {
@@ -4931,19 +4941,13 @@ function convertProspectToClient(companyId) {
   const existingClient = getClientByProspect(company);
   if (existingClient) {
     linkProspectToClient(company, existingClient.clientId);
+    elements.statusMessage.textContent = "This prospect is already linked to a client profile.";
     openClientProfile(existingClient.clientId);
     return;
   }
 
   if (!isProspectEligibleForClientConversion(company)) {
     elements.statusMessage.textContent = "Client conversion is available after quote acceptance or contract progress.";
-    return;
-  }
-
-  const confirmed = window.confirm(
-    "Create a client profile from this prospect? The prospect will stay saved and linked to the new client record."
-  );
-  if (!confirmed) {
     return;
   }
 
@@ -4962,7 +4966,7 @@ function linkProspectToClient(company, clientId) {
   const currentStage = normalizeProspectStage(
     workflow.currentStage || workflow.prospect_stage || company.prospect_stage || company.stage || "New Lead"
   );
-  const nextStage = applyStageUpdate(currentStage, "Client Onboarding");
+  const nextStage = applyStageUpdate(currentStage, "Client Converted");
   const now = new Date().toISOString();
   state.prospectWorkflows[company.id] = {
     ...workflow,
@@ -5864,7 +5868,7 @@ function toggleMilestone(companyId, milestone, isComplete) {
 
 function getStageFromProcessChecklist(milestones = {}) {
   if (milestones["Advance payment received"]) {
-    return "Client Onboarding";
+    return "Client Converted";
   }
 
   if (milestones["Contract received"]) {
@@ -7174,6 +7178,68 @@ function mergeManualProspects(companies, manualProspects) {
   return dedupeProspectList([...(Array.isArray(manualProspects) ? manualProspects : []), ...(Array.isArray(companies) ? companies : [])]);
 }
 
+function upsertSavedProspectSnapshot(company) {
+  const snapshot = normalizeSavedProspectSnapshot(company);
+  const nextManualProspects = Array.isArray(state.manualProspects) ? [...state.manualProspects] : [];
+  const existingIndex = nextManualProspects.findIndex((prospect) => isDuplicateProspect(prospect, snapshot));
+
+  if (existingIndex >= 0) {
+    nextManualProspects[existingIndex] = mergeProspectData(nextManualProspects[existingIndex], snapshot);
+  } else {
+    nextManualProspects.unshift(snapshot);
+  }
+
+  state.manualProspects = dedupeProspectList(nextManualProspects).slice(0, 250);
+  persistManualProspects();
+  state.companies = mergeManualProspects(state.companies, state.manualProspects);
+  return state.manualProspects.find((prospect) => isDuplicateProspect(prospect, snapshot)) || snapshot;
+}
+
+function normalizeSavedProspectSnapshot(company = {}) {
+  const filters = getActiveFilters();
+  const id = company.id || company.placeId || company.place_id || makeStableManualId(company.name || company.businessName, company.address);
+  return {
+    ...company,
+    id,
+    placeId: company.placeId || company.place_id || "",
+    place_id: company.place_id || company.placeId || "",
+    name: company.name || company.businessName || "Saved prospect",
+    businessName: company.businessName || company.name || "Saved prospect",
+    keyword: company.keyword || company.businessType || filters.keywordLabel || DEFAULT_SEARCH_KEYWORD,
+    businessType: company.businessType || company.keyword || filters.keywordLabel || DEFAULT_SEARCH_KEYWORD,
+    industry: company.industry || filters.industry || inferCompanyIndustry(company),
+    address: company.address || "",
+    city: company.city || filters.cityLabel || "",
+    state: company.state || filters.state || "",
+    phone: company.phone || "",
+    website: company.website || company.websiteUrl || company.website_url || "",
+    websiteUrl: company.websiteUrl || company.website || company.website_url || "",
+    websiteStatus: company.websiteStatus || company.website_status || "Unknown",
+    rating: Number(company.rating || 0),
+    reviews: Number(company.reviews || company.reviewCount || 0),
+    reviewCount: Number(company.reviewCount || company.reviews || 0),
+    opportunityScore: Number(company.opportunityScore || company.lead_score || 0),
+    opportunityPriority: company.opportunityPriority || company.lead_label || getOpportunityPriority(company.opportunityScore || company.lead_score || 0),
+    lead_score: Number(company.lead_score || company.opportunityScore || 0),
+    lead_label: company.lead_label || company.opportunityPriority || getOpportunityPriority(company.opportunityScore || company.lead_score || 0),
+    searchMode: company.searchMode || filters.searchMode || DEFAULT_SEARCH_MODE,
+    recordPurpose: company.recordPurpose || getSearchMode(company.searchMode || filters.searchMode || DEFAULT_SEARCH_MODE).recordPurpose,
+    source: company.source || "google_places",
+    source_url: company.source_url || company.googleProfileUrl || company.mapsUrl || "",
+    googleProfileUrl: company.googleProfileUrl || company.source_url || "",
+    mapsUrl: company.mapsUrl || company.google_maps_url || company.googleMapsUrl || company.source_url || "",
+    contacts: Array.isArray(company.contacts) ? company.contacts : [],
+    primary_contact: company.primary_contact || null,
+    prospect_stage: company.prospect_stage || company.stage || "New Lead",
+    stage: company.stage || company.prospect_stage || "New Lead",
+    quote_status: company.quote_status || "Not Started",
+    saved_snapshot: true,
+    manual_prospect: Boolean(company.manual_prospect),
+    updated_at: new Date().toISOString(),
+    collected_at: company.collected_at || new Date().toISOString(),
+  };
+}
+
 function makeStableManualId(name, address) {
   return `manual-${String(`${name || "prospect"}-${address || ""}`)
     .toLowerCase()
@@ -8475,7 +8541,7 @@ function isProspectEligibleForClientConversion(company) {
   const milestones = company?.milestones && typeof company.milestones === "object" ? company.milestones : {};
   const stage = normalizeProspectStage(company?.currentStage || company?.prospect_stage || company?.stage || "New Lead");
   return (
-    ["Contract Expected", "Contract Received", "Client Onboarding"].includes(stage) ||
+    ["Contract Expected", "Contract Received", "Client Converted", "Client Onboarding"].includes(stage) ||
     String(company?.quote_status || "").trim() === "Accepted" ||
     Boolean(milestones["Contract received"]) ||
     Boolean(milestones["Advance payment received"])
@@ -10189,8 +10255,27 @@ function removeProspectFromList(companyId, listId) {
 }
 
 function persistSavedCompanies() {
-  state.savedCompanies = [...new Set(state.savedCompanies.filter(Boolean))];
+  state.savedCompanies = dedupeSavedCompanyIds(state.savedCompanies);
   writeLocalJson(SAVED_COMPANIES_KEY, state.savedCompanies);
+}
+
+function dedupeSavedCompanyIds(savedIds = []) {
+  const canonicalIds = [];
+  const seenKeys = new Set();
+
+  [...new Set((Array.isArray(savedIds) ? savedIds : []).map((id) => String(id || "").trim()).filter(Boolean))].forEach((id) => {
+    const company = state.companies.find((item) => item.id === id) || state.manualProspects.find((item) => item.id === id) || { id };
+    const keys = getProspectDedupeKeys(company);
+    const hasDuplicate = keys.some((key) => seenKeys.has(key));
+    if (hasDuplicate) {
+      return;
+    }
+
+    canonicalIds.push(id);
+    keys.forEach((key) => seenKeys.add(key));
+  });
+
+  return canonicalIds;
 }
 
 function loadProspectWorkflows() {
