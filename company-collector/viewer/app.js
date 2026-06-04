@@ -2019,7 +2019,13 @@ function renderClientsView() {
         </div>
       </div>
     `
-    : "";
+    : `
+      <section class="workflow-card premium-empty-panel">
+        <p class="detail-section-title">Clients</p>
+        <h3>No clients yet.</h3>
+        <p class="toolbar-subtle">Convert a qualified saved prospect when the quote is accepted or the contract is expected.</p>
+      </section>
+    `;
 
   elements.resultsContainer.querySelectorAll("[data-open-client]").forEach((button) => {
     button.addEventListener("click", () => openClientProfile(button.getAttribute("data-open-client")));
@@ -2512,27 +2518,27 @@ function renderSettingsView() {
   const summary = getLocalDataSummary();
   const readiness = getMigrationReadinessStatus(summary, status);
   elements.resultsContainer.innerHTML = `
-    <section class="workflow-card">
-      <p class="detail-section-title">Workspace</p>
+    <section class="workflow-card settings-panel">
+      <p class="detail-section-title">General Settings</p>
       <div class="overview-grid">
-        <div class="overview-card"><span class="overview-label">Workspace</span><strong>Local Workspace</strong></div>
+        <div class="overview-card"><span class="overview-label">Workspace</span><strong>Local</strong></div>
         <div class="overview-card"><span class="overview-label">User</span><strong>Local User</strong></div>
         <div class="overview-card"><span class="overview-label">Role</span><strong>Owner</strong></div>
-        <div class="overview-card"><span class="overview-label">Auth</span><strong>Not Enabled Yet</strong></div>
+        <div class="overview-card"><span class="overview-label">Authentication</span><strong>Local Access</strong></div>
       </div>
     </section>
-    <section class="workflow-card">
-      <p class="detail-section-title">Storage</p>
+    <section class="workflow-card settings-panel">
+      <p class="detail-section-title">Storage Status</p>
       <div class="overview-grid">
         <div class="overview-card"><span class="overview-label">Active Storage</span><strong>${escapeHtml(modeLabel)}</strong></div>
         <div class="overview-card"><span class="overview-label">Supabase</span><strong>${status.supabaseConfigured ? "Configured" : "Not Configured"}</strong></div>
         <div class="overview-card"><span class="overview-label">Saved Prospects Source</span><strong>${escapeHtml(status.savedProspectsSource || modeLabel)}</strong></div>
         <div class="overview-card"><span class="overview-label">Clients Source</span><strong>${escapeHtml(status.clientsSource || modeLabel)}</strong></div>
       </div>
-      <p class="toolbar-subtle">Local mode is intended for the MVP. Supabase migration is prepared but not fully enabled.</p>
+      <p class="toolbar-subtle">Client Finder uses local storage by default. Supabase readiness is tracked below for future migration planning.</p>
     </section>
-    <section class="workflow-card">
-      <p class="detail-section-title">Migration Readiness</p>
+    <section class="workflow-card settings-panel">
+      <p class="detail-section-title">Supabase Readiness</p>
       <div class="overview-grid">
         <div class="overview-card"><span class="overview-label">Local Data Detected</span><strong>${summary.localDataDetected ? "Yes" : "No"}</strong></div>
         <div class="overview-card"><span class="overview-label">Saved Prospects</span><strong>${escapeHtml(String(summary.savedProspectsCount))}</strong></div>
@@ -2543,8 +2549,8 @@ function renderSettingsView() {
       </div>
       <p class="toolbar-subtle">${escapeHtml(readiness.note)}</p>
     </section>
-    <section class="workflow-card">
-      <p class="detail-section-title">Data Safety</p>
+    <section class="workflow-card settings-panel">
+      <p class="detail-section-title">Backup / Restore</p>
       <p class="toolbar-subtle">Backup files may contain business notes, client records, payment references, and access references. Store backup files securely.</p>
       <div class="workflow-actions">
         <button id="export-local-backup-button" class="secondary-btn" type="button">Export Local Backup</button>
@@ -2565,8 +2571,8 @@ function renderSettingsView() {
         <button id="restore-local-backup-button" class="secondary-btn" type="button">Import Local Backup</button>
       </div>
     </section>
-    <section class="workflow-card">
-      <p class="detail-section-title">Reset Tools</p>
+    <section class="workflow-card settings-panel">
+      <p class="detail-section-title">Data Safety</p>
       <p class="toolbar-subtle">This cannot be undone unless you exported a backup first. Reset tools do not affect API keys, server env vars, or Vercel settings.</p>
       <div class="workflow-actions">
         <button class="secondary-btn" type="button" data-clear-local-data="search_cache">Clear Search Results Cache</button>
@@ -2574,6 +2580,15 @@ function renderSettingsView() {
         <button class="secondary-btn" type="button" data-clear-local-data="clients">Clear Clients</button>
         <button class="secondary-btn" type="button" data-clear-local-data="saved_lists">Clear Saved Lists</button>
         <button class="secondary-btn" type="button" data-clear-local-data="all">Clear All Client Finder Local Data</button>
+      </div>
+    </section>
+    <section class="workflow-card settings-panel">
+      <p class="detail-section-title">System Information</p>
+      <div class="overview-grid">
+        <div class="overview-card"><span class="overview-label">Routing</span><strong>Vercel Ready</strong></div>
+        <div class="overview-card"><span class="overview-label">Default Storage</span><strong>LocalStorage</strong></div>
+        <div class="overview-card"><span class="overview-label">Product</span><strong>Client Finder</strong></div>
+        <div class="overview-card"><span class="overview-label">Backup Schema</span><strong>${escapeHtml(BACKUP_SCHEMA_VERSION)}</strong></div>
       </div>
     </section>
   `;
@@ -4159,7 +4174,7 @@ function renderClientTabContent(client, activeTab) {
   return `
     <section class="workflow-card">
       <p class="detail-section-title">${escapeHtml(titleCase(activeTab))}</p>
-      <p class="toolbar-subtle">Coming in next tasks.</p>
+      <p class="toolbar-subtle">No additional client fields are available for this section.</p>
     </section>
   `;
 }
